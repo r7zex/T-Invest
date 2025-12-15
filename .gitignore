@@ -1,0 +1,40 @@
+# Переменные окружения (содержат чувствительную информацию)
+.env
+
+# Виртуальное окружение Python
+.venv/
+venv/
+env/
+ENV/
+
+# Байт-код Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Логи
+*.log
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Кэш
+.cache/
+*.cache
+
+# Тестовые файлы
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Дистрибутивы
+dist/
+build/
+*.egg-info/

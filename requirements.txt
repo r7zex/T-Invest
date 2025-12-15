@@ -1,3 +1,11 @@
-pyTelegramBotAPI==4.6.0
-requests==2.28.0
-python-dotenv==0.19.2
+# Telegram Bot API
+pyTelegramBotAPI==4.24.0
+
+# HTTP библиотека для запросов к T-Invest API
+requests==2.32.3
+
+# Работа с переменными окружения
+python-dotenv==1.0.1
+
+# Опционально: для асинхронной работы
+# aiogram==3.15.0

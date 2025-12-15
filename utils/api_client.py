@@ -21,6 +21,8 @@ T_INVEST_API_KEY = os.getenv("T_INVEST_API_KEY")
 # Правильный URL для prod (обновлённый после ребрендинга)
 BASE_URL = "https://invest-public-api.tbank.ru/rest"
 
+TEMP_URL = "https://sandbox-invest-public-api.tbank.ru"
+
 # ⚠️ ОТКЛЮЧАЕМ ПРОВЕРКУ SSL (только для тестирования!)
 SSL_VERIFY = False
 

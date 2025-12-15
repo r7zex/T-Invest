@@ -65,7 +65,7 @@ def format_money(value: float, currency: str = "RUB") -> str:
     }
 
     symbol = currency_symbols.get(currency, currency)
-    return f"{value:,.2f} {symbol}".replace(",", " ")
+    return f"{value:,.3f} {symbol}".replace(",", " ")
 
 
 def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyboardMarkup:

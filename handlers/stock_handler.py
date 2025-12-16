@@ -258,7 +258,7 @@ def stock_handler(call, bot):
             f"💳 **Текущая цена:** {format_money(current_price, currency)}\n\n"
             f"📊 **Стоимость покупки:** {format_money(total_buy_value, currency)}\n"
             f"💎 **Текущая стоимость:** {format_money(total_current, currency)}\n\n"
-            f"{pl_color} **Прибыль/Убыток:** {pl_emoji}{format_money(abs(profit_loss), currency)} "
+            f"{pl_color} **Прибыль/Убыток:** {pl_emoji}{format_money(profit_loss, currency)} "
             f"({profit_loss_percent:+.2f}%)\n\n"
             f"🔖 **FIGI:** `{figi}`"
         )

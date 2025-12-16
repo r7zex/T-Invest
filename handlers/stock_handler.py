@@ -161,6 +161,12 @@ def stock_handler(call, bot):
         # Показываем индикатор загрузки
         bot.answer_callback_query(call.id, "⏳ Загружаю данные...")
 
+        # Удаляем сообщение с портфелем, чтобы заменить его информацией об акции
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение с портфелем: {e}")
+
         # Получаем позиции портфеля для информации о количестве
         positions = get_portfolio_positions()
         position_info = None
@@ -217,16 +223,16 @@ def stock_handler(call, bot):
             position_info.get("averagePositionPrice", {})
         )
 
-        # Общая стоимость покупки
-        total_buy_value = quantity * average_price if average_price > 0 else 0
+        # Общая стоимость покупки с учётом знака (для маржинальных позиций)
+        total_buy_value = quantity * average_price
 
-        # Текущая стоимость
-        total_current = quantity * current_price if current_price > 0 else 0
+        # Текущая стоимость с учётом знака
+        total_current = quantity * current_price
 
-        # Прибыль/убыток
-        profit_loss = total_current - total_buy_value if total_buy_value > 0 else 0
+        # Прибыль/убыток (учитывает как лонг, так и шорт позиции)
+        profit_loss = total_current - total_buy_value
         profit_loss_percent = (
-            (profit_loss / total_buy_value * 100) if total_buy_value > 0 else 0
+            (profit_loss / abs(total_buy_value) * 100) if total_buy_value != 0 else 0
         )
 
         # Определяем emoji для прибыли/убытка

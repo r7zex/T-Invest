@@ -161,6 +161,12 @@ def stock_handler(call, bot):
         # Показываем индикатор загрузки
         bot.answer_callback_query(call.id, "⏳ Загружаю данные...")
 
+        # Удаляем сообщение с портфелем, чтобы заменить его информацией об акции
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение портфеля: {e}")
+
         # Получаем позиции портфеля для информации о количестве
         positions = get_portfolio_positions()
         position_info = None
@@ -217,16 +223,17 @@ def stock_handler(call, bot):
             position_info.get("averagePositionPrice", {})
         )
 
-        # Общая стоимость покупки
-        total_buy_value = quantity * average_price if average_price > 0 else 0
+        # Общая стоимость покупки/продажи с учётом возможных отрицательных значений
+        total_buy_value = quantity * average_price
 
-        # Текущая стоимость
-        total_current = quantity * current_price if current_price > 0 else 0
+        # Текущая стоимость позиции (для шорта будет отрицательной)
+        total_current = quantity * current_price
 
-        # Прибыль/убыток
-        profit_loss = total_current - total_buy_value if total_buy_value > 0 else 0
+        # Прибыль/убыток учитывает как длинные, так и короткие позиции
+        profit_loss = total_current - total_buy_value
+        profit_loss_base = abs(total_buy_value)
         profit_loss_percent = (
-            (profit_loss / total_buy_value * 100) if total_buy_value > 0 else 0
+            (profit_loss / profit_loss_base * 100) if profit_loss_base > 0 else 0
         )
 
         # Определяем emoji для прибыли/убытка

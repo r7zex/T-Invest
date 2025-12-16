@@ -65,7 +65,7 @@ def format_money(value: float, currency: str = "RUB") -> str:
     }
 
     symbol = currency_symbols.get(currency, currency)
-    return f"{value:,.3f} {symbol}".replace(",", " ")
+    return f"{value:,.2f} {symbol}".replace(",", " ")
 
 
 def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyboardMarkup:
@@ -257,7 +257,7 @@ def stock_handler(call, bot):
             f"💵 **Средняя цена покупки:** {format_money(average_price, currency)}\n"
             f"💳 **Текущая цена:** {format_money(current_price, currency)}\n\n"
             f"📊 **Стоимость покупки:** {format_money(total_buy_value, currency)}\n"
-            f"💎 **Текущая стоимость:** {format_money(total_current, currency)}\n\n"
+            f"💎 **Текущая стоимость:** {format_money(total_current, currency)} ({profit_loss_percent:+.2f}%)\n\n"
             f"{pl_color} **Прибыль/Убыток:** {pl_emoji}{format_money(profit_loss, currency)} "
             f"({profit_loss_percent:+.2f}%)\n\n"
             f"🔖 **FIGI:** `{figi}`"

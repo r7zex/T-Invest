@@ -49,7 +49,7 @@ def get_accounts() -> List[Dict]:
     body = {}
 
     try:
-        logger.info("Запрос списка счетов пользователя")
+        logger.info("🔍 Запрос списка счетов пользователя")
 
         response = requests.post(
             url,
@@ -59,20 +59,34 @@ def get_accounts() -> List[Dict]:
             verify=SSL_VERIFY
         )
 
+        logger.info(f"📡 Статус ответа API: {response.status_code}")
+
         response.raise_for_status()
         result = response.json()
 
         accounts = result.get("accounts", [])
 
         if not accounts:
-            logger.warning("У пользователя нет доступных счетов")
+            logger.warning("⚠️ У пользователя нет доступных счетов")
+            logger.info(f"📄 Полный ответ API: {result}")
             return []
 
-        logger.info(f"Получено {len(accounts)} счетов")
+        logger.info(f"✅ Получено {len(accounts)} счетов")
+        for idx, acc in enumerate(accounts):
+            logger.info(f"  📋 Счёт {idx + 1}: ID={acc.get('id')}, Type={acc.get('type')}")
+
         return accounts
 
+    except requests.exceptions.HTTPError as err:
+        logger.error(f"❌ HTTP ошибка при запросе счетов: {err}")
+        logger.error(f"   Статус: {err.response.status_code}")
+        try:
+            logger.error(f"   Ответ: {err.response.json()}")
+        except:
+            logger.error(f"   Ответ: {err.response.text}")
+        return []
     except requests.exceptions.RequestException as err:
-        logger.error(f"Ошибка при запросе списка счетов: {err}")
+        logger.error(f"❌ Ошибка при запросе списка счетов: {err}")
         return []
 
 
@@ -100,7 +114,7 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
     }
 
     try:
-        logger.info(f"Запрос портфеля для счёта {account_id}")
+        logger.info(f"🔍 Запрос портфеля для счёта {account_id}")
 
         response = requests.post(
             url,
@@ -110,16 +124,32 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
             verify=SSL_VERIFY
         )
 
+        logger.info(f"📡 Статус ответа API: {response.status_code}")
+
         response.raise_for_status()
         result = response.json()
 
         positions = result.get("positions", [])
-        logger.info(f"В портфеле {len(positions)} позиций")
+        virtual_positions = result.get("virtualPositions", [])
+
+        logger.info(f"✅ В портфеле {len(positions)} обычных позиций")
+        logger.info(f"🎁 В портфеле {len(virtual_positions)} подарочных позиций")
+
+        # Логируем ключи в ответе для отладки
+        logger.info(f"📋 Ключи в ответе портфеля: {list(result.keys())}")
 
         return result
 
+    except requests.exceptions.HTTPError as err:
+        logger.error(f"❌ HTTP ошибка при запросе портфеля: {err}")
+        logger.error(f"   Статус: {err.response.status_code}")
+        try:
+            logger.error(f"   Ответ: {err.response.json()}")
+        except:
+            logger.error(f"   Ответ: {err.response.text}")
+        return None
     except requests.exceptions.RequestException as err:
-        logger.error(f"Ошибка при запросе портфеля: {err}")
+        logger.error(f"❌ Ошибка при запросе портфеля: {err}")
         return None
 
 
@@ -141,19 +171,33 @@ def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optiona
     if not account_id:
         accounts = get_accounts()
         if not accounts:
-            logger.error("Не удалось получить список счетов")
+            logger.error("❌ Не удалось получить список счетов")
             return [], None, None
         account_id = accounts[0].get("id")
-        logger.info(f"Используется счёт: {account_id}")
+        logger.info(f"✅ Используется счёт: {account_id}")
 
     # Получаем портфель
     portfolio = get_portfolio(account_id)
     if not portfolio:
+        logger.error(f"❌ Не удалось получить портфель для счёта {account_id}")
         return [], None, account_id
+
+    logger.info(f"📊 Получен портфель. Ключи в ответе: {list(portfolio.keys())}")
 
     # Извлекаем только позиции с типом "share" (акции)
     positions = portfolio.get("positions", [])
     virtual_positions = portfolio.get("virtualPositions", [])
+
+    logger.info(f"📦 Обычных позиций: {len(positions)}")
+    logger.info(f"🎁 Подарочных позиций: {len(virtual_positions)}")
+
+    # Подсчитываем типы инструментов
+    if positions:
+        types = {}
+        for pos in positions:
+            inst_type = pos.get("instrumentType", "unknown")
+            types[inst_type] = types.get(inst_type, 0) + 1
+        logger.info(f"📋 Типы обычных инструментов: {types}")
 
     shares = [pos for pos in positions if pos.get("instrumentType") == "share"]
     virtual_shares = []
@@ -167,7 +211,8 @@ def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optiona
     all_shares = shares + virtual_shares
 
     logger.info(
-        f"Найдено {len(all_shares)} акций в портфеле (вкл. подарочные: {len(virtual_shares)})"
+        f"✅ Найдено {len(all_shares)} акций в портфеле "
+        f"(обычных: {len(shares)}, подарочных: {len(virtual_shares)})"
     )
     return all_shares, portfolio, account_id
 
@@ -192,7 +237,7 @@ def get_withdraw_limits(account_id: str) -> Optional[Dict]:
     body = {"accountId": account_id}
 
     try:
-        logger.info(f"Запрос лимитов на вывод для счёта {account_id}")
+        logger.info(f"🔍 Запрос лимитов на вывод для счёта {account_id}")
 
         response = requests.post(
             url,
@@ -202,18 +247,36 @@ def get_withdraw_limits(account_id: str) -> Optional[Dict]:
             verify=SSL_VERIFY
         )
 
+        logger.info(f"📡 Статус ответа API: {response.status_code}")
+
         response.raise_for_status()
         result = response.json()
 
         if not result:
-            logger.warning("API вернул пустые лимиты на вывод")
+            logger.warning("⚠️ API вернул пустые лимиты на вывод")
             return None
 
-        logger.info("Успешно получены лимиты на вывод")
+        logger.info("✅ Успешно получены лимиты на вывод")
+        logger.info(f"📋 Ключи в ответе лимитов: {list(result.keys())}")
+
+        # Логируем доступные средства
+        money = result.get("money", [])
+        blocked = result.get("blocked", [])
+        logger.info(f"💰 Доступно валют: {len(money)}")
+        logger.info(f"🔒 Заблокировано валют: {len(blocked)}")
+
         return result
 
+    except requests.exceptions.HTTPError as err:
+        logger.error(f"❌ HTTP ошибка при запросе лимитов: {err}")
+        logger.error(f"   Статус: {err.response.status_code}")
+        try:
+            logger.error(f"   Ответ: {err.response.json()}")
+        except:
+            logger.error(f"   Ответ: {err.response.text}")
+        return None
     except requests.exceptions.RequestException as err:
-        logger.error(f"Ошибка при запросе лимитов на вывод: {err}")
+        logger.error(f"❌ Ошибка при запросе лимитов на вывод: {err}")
         return None
 
 

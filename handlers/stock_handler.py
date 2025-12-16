@@ -121,33 +121,26 @@ def stock_handler(call, bot):
 
     # Обработка запроса портфеля
     if call.data == "view_stocks":
-        logger.info(f"Пользователь {call.from_user.id} запросил свой портфель 📊")
+        logger.info(f"📊 Пользователь {call.from_user.id} запросил свой портфель")
 
         # Удаляем предыдущее сообщение
         try:
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception as e:
-            logger.warning(f"Не удалось удалить сообщение: {e}")
+            logger.warning(f"⚠️ Не удалось удалить сообщение: {e}")
 
         # Получаем позиции из портфеля
         positions, portfolio, account_id = get_portfolio_positions()
 
-        if not positions:
-            bot.send_message(
-                call.message.chat.id,
-                "📭 Ваш портфель пуст или не удалось получить данные.\n\n"
-                "Возможные причины:\n"
-                "• В портфеле нет акций\n"
-                "• API временно недоступен\n"
-                "• Неверный токен доступа\n"
-                "• Токен не имеет прав на чтение портфеля\n\n"
-                "💡 Убедитесь, что при создании токена была выбрана "
-                "опция 'Только чтение' или полный доступ."
-            )
-            return
+        logger.info(f"📦 Получено позиций: {len(positions) if positions else 0}")
+        logger.info(f"💼 Объект портфеля: {'Да' if portfolio else 'Нет'}")
+        logger.info(f"🆔 Account ID: {account_id if account_id else 'Нет'}")
 
         # Получаем данные по балансам
-        limits = get_withdraw_limits(account_id) if account_id else None
+        limits = None
+        if account_id:
+            limits = get_withdraw_limits(account_id)
+            logger.info(f"💰 Лимиты получены: {'Да' if limits else 'Нет'}")
 
         def extract_money_value(values):
             if not values:
@@ -163,15 +156,47 @@ def stock_handler(call, bot):
         if limits:
             current_balance = extract_money_value(limits.get("money"))
             reserved_balance = extract_money_value(limits.get("blocked"))
+            logger.info(f"💳 Текущий баланс: {current_balance}")
+            logger.info(f"⏸️ Зарезервированный: {reserved_balance}")
         elif portfolio:
             current_balance = extract_money_value([portfolio.get("totalAmountCurrencies", {})])
             if current_balance:
                 reserved_balance = (0.0, current_balance[1])
 
-        # Создаём клавиатуру с акциями из портфеля
-        markup = create_portfolio_keyboard(positions)
+        # Если нет позиций И нет баланса - показываем ошибку
+        if not positions and not current_balance:
+            error_msg = (
+                "📭 Ваш портфель пуст или не удалось получить данные.\n\n"
+                "Возможные причины:\n"
+            )
 
-        message_lines = [f"💼 Ваш портфель ({len(positions)} позиций) 📈"]
+            if not account_id:
+                error_msg += "• ❌ Не удалось получить ID счёта\n"
+            if not portfolio:
+                error_msg += "• ❌ API не вернул данные портфеля\n"
+            if not limits:
+                error_msg += "• ❌ Не удалось получить лимиты счёта\n"
+
+            error_msg += (
+                "• API временно недоступен\n"
+                "• Неверный токен доступа\n"
+                "• Токен не имеет прав на чтение портфеля\n\n"
+                "💡 Проверьте логи бота для подробной информации.\n"
+                "Убедитесь, что при создании токена была выбрана "
+                "опция 'Только чтение' или полный доступ."
+            )
+
+            bot.send_message(call.message.chat.id, error_msg)
+            return
+
+        # Формируем сообщение
+        message_lines = []
+
+        if positions:
+            message_lines.append(f"💼 Ваш портфель ({len(positions)} позиций) 📈")
+        else:
+            message_lines.append("💼 Ваш портфель 📊")
+            message_lines.append("📭 В портфеле пока нет акций")
 
         if current_balance:
             amount, currency = current_balance
@@ -179,15 +204,26 @@ def stock_handler(call, bot):
 
         if reserved_balance:
             amount, currency = reserved_balance
-            message_lines.append(f"⏸️ Зарезервированный баланс: {format_money(amount, currency)}")
+            if amount > 0:
+                message_lines.append(f"⏸️ Зарезервировано: {format_money(amount, currency)}")
 
-        message_lines.append("Выберите акцию для просмотра подробной информации:")
+        if positions:
+            message_lines.append("\nВыберите акцию для просмотра подробной информации:")
 
-        bot.send_message(
-            call.message.chat.id,
-            "\n".join(message_lines),
-            reply_markup=markup
-        )
+            # Создаём клавиатуру с акциями из портфеля
+            markup = create_portfolio_keyboard(positions)
+
+            bot.send_message(
+                call.message.chat.id,
+                "\n".join(message_lines),
+                reply_markup=markup
+            )
+        else:
+            # Если нет позиций, но есть баланс - просто показываем баланс
+            bot.send_message(
+                call.message.chat.id,
+                "\n".join(message_lines)
+            )
 
     # Обработка выбора конкретной акции из портфеля
     elif call.data.startswith("portfolio_select::"):

@@ -93,10 +93,10 @@ def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyb
             # Создаём текст кнопки с тикером и количеством
             prefix = "🎁 " if is_virtual else ""
             # Для подарочных акций показываем дробное количество, если оно не целое
-            if is_virtual and quantity != int(quantity):
+            if isinstance(quantity, (int, float)) and is_virtual and quantity != int(quantity):
                 qty_str = f"{quantity:.2f}"
             else:
-                qty_str = str(int(quantity))
+                qty_str = str(int(quantity)) if isinstance(quantity, (int, float)) else "N/A"
             button_text = f"{prefix}{ticker} ({qty_str} шт.)"
 
             button = telebot.types.InlineKeyboardButton(
@@ -292,10 +292,10 @@ def stock_handler(call, bot):
         gift_label = "🎁 Подарочная позиция\n" if is_virtual else ""
         
         # Форматируем количество: для подарочных показываем дробное, если есть
-        if is_virtual and quantity != int(quantity):
+        if isinstance(quantity, (int, float)) and is_virtual and quantity != int(quantity):
             qty_display = f"{quantity:.2f}"
         else:
-            qty_display = str(int(quantity))
+            qty_display = str(int(quantity)) if isinstance(quantity, (int, float)) else "N/A"
 
         # Формируем сообщение с информацией
         message = (

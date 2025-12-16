@@ -2,6 +2,7 @@ import requests
 import os
 import logging
 import time
+import threading
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
@@ -34,9 +35,11 @@ logger.warning(
 
 # Глобальная сессия для переиспользования TCP-соединений
 _session = None
+_session_lock = threading.Lock()
 
 # Кэш для данных с TTL
 _cache = {}
+_cache_lock = threading.Lock()
 _cache_ttl = 30  # секунд
 
 
@@ -44,26 +47,31 @@ def get_session() -> requests.Session:
     """
     Получает или создаёт глобальную сессию для HTTP-запросов.
     Переиспользование сессии значительно ускоряет запросы.
+    Thread-safe реализация.
     
     Returns:
         requests.Session: Настроенная сессия
     """
     global _session
     if _session is None:
-        _session = requests.Session()
-        _session.headers.update({
-            "Authorization": f"Bearer {T_INVEST_API_KEY}",
-            "Content-Type": "application/json"
-        })
-        logger.info("Создана новая глобальная HTTP-сессия")
+        with _session_lock:
+            # Double-check locking pattern
+            if _session is None:
+                _session = requests.Session()
+                _session.headers.update({
+                    "Authorization": f"Bearer {T_INVEST_API_KEY}",
+                    "Content-Type": "application/json"
+                })
+                logger.info("Создана новая глобальная HTTP-сессия")
     return _session
 
 
 def clear_cache():
-    """Очищает весь кэш."""
+    """Очищает весь кэш. Thread-safe."""
     global _cache
-    _cache = {}
-    logger.info("Кэш очищен")
+    with _cache_lock:
+        _cache = {}
+        logger.info("Кэш очищен")
 
 
 def get_accounts() -> List[Dict]:
@@ -173,15 +181,17 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
         account_id = accounts[0].get("id")
         logger.info(f"Используется счёт: {account_id}")
 
-    # Проверяем кэш
+    # Проверяем кэш (thread-safe)
     cache_key = f"portfolio_{account_id}"
     now = time.time()
     
-    if use_cache and cache_key in _cache:
-        data, timestamp = _cache[cache_key]
-        if now - timestamp < _cache_ttl:
-            logger.info(f"Используются кэшированные данные портфеля (возраст: {now - timestamp:.1f}s)")
-            return data
+    if use_cache:
+        with _cache_lock:
+            if cache_key in _cache:
+                data, timestamp = _cache[cache_key]
+                if now - timestamp < _cache_ttl:
+                    logger.info(f"Используются кэшированные данные портфеля (возраст: {now - timestamp:.1f}s)")
+                    return data
 
     # Получаем портфель
     portfolio = get_portfolio(account_id)
@@ -209,10 +219,11 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
     
     result = (all_shares, portfolio, account_id)
     
-    # Сохраняем в кэш
+    # Сохраняем в кэш (thread-safe)
     if use_cache:
-        _cache[cache_key] = (result, now)
-        logger.info("Данные портфеля сохранены в кэш")
+        with _cache_lock:
+            _cache[cache_key] = (result, now)
+            logger.info("Данные портфеля сохранены в кэш")
     
     return result
 

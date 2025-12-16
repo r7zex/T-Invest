@@ -1,7 +1,7 @@
 import requests
 import os
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
 
@@ -123,7 +123,7 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
         return None
 
 
-def get_portfolio_positions(account_id: str = None) -> List[Dict]:
+def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optional[Dict], Optional[str]]:
     """
     Получает список позиций в портфеле пользователя.
     Если account_id не указан, берётся первый доступный счёт.
@@ -132,28 +132,89 @@ def get_portfolio_positions(account_id: str = None) -> List[Dict]:
         account_id: Идентификатор счёта (опционально)
 
     Returns:
-        List[Dict]: Список позиций (акций) в портфеле
+        Tuple[List[Dict], Optional[Dict], Optional[str]]:
+            - Список позиций (акций) в портфеле, включая подарочные
+            - Исходный объект портфеля
+            - Идентификатор используемого счёта
     """
     # Если account_id не указан, получаем первый счёт
     if not account_id:
         accounts = get_accounts()
         if not accounts:
             logger.error("Не удалось получить список счетов")
-            return []
+            return [], None, None
         account_id = accounts[0].get("id")
         logger.info(f"Используется счёт: {account_id}")
 
     # Получаем портфель
     portfolio = get_portfolio(account_id)
     if not portfolio:
-        return []
+        return [], None, account_id
 
     # Извлекаем только позиции с типом "share" (акции)
     positions = portfolio.get("positions", [])
-    shares = [pos for pos in positions if pos.get("instrumentType") == "share"]
+    virtual_positions = portfolio.get("virtualPositions", [])
 
-    logger.info(f"Найдено {len(shares)} акций в портфеле")
-    return shares
+    shares = [pos for pos in positions if pos.get("instrumentType") == "share"]
+    virtual_shares = []
+
+    for pos in virtual_positions:
+        if pos.get("instrumentType") == "share":
+            pos_with_flag = pos.copy()
+            pos_with_flag["is_virtual"] = True
+            virtual_shares.append(pos_with_flag)
+
+    all_shares = shares + virtual_shares
+
+    logger.info(
+        f"Найдено {len(all_shares)} акций в портфеле (вкл. подарочные: {len(virtual_shares)})"
+    )
+    return all_shares, portfolio, account_id
+
+
+def get_withdraw_limits(account_id: str) -> Optional[Dict]:
+    """
+    Получает информацию о доступных средствах и зарезервированных деньгах.
+
+    Args:
+        account_id: Идентификатор счёта
+
+    Returns:
+        Optional[Dict]: Данные лимитов на вывод или None
+    """
+    url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.OperationsService/GetWithdrawLimits"
+
+    headers = {
+        "Authorization": f"Bearer {T_INVEST_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    body = {"accountId": account_id}
+
+    try:
+        logger.info(f"Запрос лимитов на вывод для счёта {account_id}")
+
+        response = requests.post(
+            url,
+            json=body,
+            headers=headers,
+            timeout=10,
+            verify=SSL_VERIFY
+        )
+
+        response.raise_for_status()
+        result = response.json()
+
+        if not result:
+            logger.warning("API вернул пустые лимиты на вывод")
+            return None
+
+        logger.info("Успешно получены лимиты на вывод")
+        return result
+
+    except requests.exceptions.RequestException as err:
+        logger.error(f"Ошибка при запросе лимитов на вывод: {err}")
+        return None
 
 
 def fetch_shares(instrument_status: str = "INSTRUMENT_STATUS_BASE") -> List[Dict]:

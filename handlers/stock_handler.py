@@ -4,7 +4,8 @@ from typing import List, Dict
 from utils.api_client import (
     get_portfolio_positions,
     get_share_info,
-    get_last_prices
+    get_last_prices,
+    get_withdraw_limits
 )
 
 logger = logging.getLogger(__name__)
@@ -87,9 +88,11 @@ def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyb
             ticker = position.get("ticker", "N/A")
             figi = position.get("figi", ticker)
             quantity = format_quotation(position.get("quantity", {}))
+            is_virtual = position.get("is_virtual", False)
 
             # Создаём текст кнопки с тикером и количеством
-            button_text = f"{ticker} ({int(quantity)} шт.)"
+            prefix = "🎁 " if is_virtual else ""
+            button_text = f"{prefix}{ticker} ({int(quantity)} шт.)"
 
             button = telebot.types.InlineKeyboardButton(
                 text=button_text,
@@ -127,7 +130,7 @@ def stock_handler(call, bot):
             logger.warning(f"Не удалось удалить сообщение: {e}")
 
         # Получаем позиции из портфеля
-        positions = get_portfolio_positions()
+        positions, portfolio, account_id = get_portfolio_positions()
 
         if not positions:
             bot.send_message(
@@ -143,13 +146,46 @@ def stock_handler(call, bot):
             )
             return
 
+        # Получаем данные по балансам
+        limits = get_withdraw_limits(account_id) if account_id else None
+
+        def extract_money_value(values):
+            if not values:
+                return None
+            money_item = values[0]
+            amount = format_quotation(money_item)
+            currency = money_item.get("currency", "RUB")
+            return amount, currency
+
+        current_balance = None
+        reserved_balance = None
+
+        if limits:
+            current_balance = extract_money_value(limits.get("money"))
+            reserved_balance = extract_money_value(limits.get("blocked"))
+        elif portfolio:
+            current_balance = extract_money_value([portfolio.get("totalAmountCurrencies", {})])
+            if current_balance:
+                reserved_balance = (0.0, current_balance[1])
+
         # Создаём клавиатуру с акциями из портфеля
         markup = create_portfolio_keyboard(positions)
 
+        message_lines = [f"💼 Ваш портфель ({len(positions)} позиций) 📈"]
+
+        if current_balance:
+            amount, currency = current_balance
+            message_lines.append(f"💳 Текущий баланс: {format_money(amount, currency)}")
+
+        if reserved_balance:
+            amount, currency = reserved_balance
+            message_lines.append(f"⏸️ Зарезервированный баланс: {format_money(amount, currency)}")
+
+        message_lines.append("Выберите акцию для просмотра подробной информации:")
+
         bot.send_message(
             call.message.chat.id,
-            f"💼 Ваш портфель ({len(positions)} позиций) 📈\n"
-            "Выберите акцию для просмотра подробной информации:",
+            "\n".join(message_lines),
             reply_markup=markup
         )
 
@@ -168,7 +204,7 @@ def stock_handler(call, bot):
             logger.warning(f"Не удалось удалить сообщение портфеля: {e}")
 
         # Получаем позиции портфеля для информации о количестве
-        positions = get_portfolio_positions()
+        positions, _, _ = get_portfolio_positions()
         position_info = None
         for pos in positions:
             if pos.get("figi") == figi:
@@ -247,9 +283,12 @@ def stock_handler(call, bot):
             pl_emoji = "➡️ "
             pl_color = "⚪"
 
+        gift_label = "🎁 Подарочная позиция\n" if position_info.get("is_virtual") else ""
+
         # Формируем сообщение с информацией
         message = (
             f"💼 **Позиция в портфеле**\n\n"
+            f"{gift_label}"
             f"🏷️ **Тикер:** `{ticker}`\n"
             f"📝 **Название:** {name}\n"
             f"💰 **Валюта:** {currency}\n\n"

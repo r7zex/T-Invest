@@ -1,6 +1,8 @@
 import requests
 import os
 import logging
+import time
+import threading
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
@@ -31,6 +33,46 @@ logger.warning(
     "Это небезопасно для продакшена. Используйте только для тестирования."
 )
 
+# Глобальная сессия для переиспользования TCP-соединений
+_session = None
+_session_lock = threading.Lock()
+
+# Кэш для данных с TTL
+_cache = {}
+_cache_lock = threading.Lock()
+_cache_ttl = 30  # секунд
+
+
+def get_session() -> requests.Session:
+    """
+    Получает или создаёт глобальную сессию для HTTP-запросов.
+    Переиспользование сессии значительно ускоряет запросы.
+    Thread-safe реализация.
+    
+    Returns:
+        requests.Session: Настроенная сессия
+    """
+    global _session
+    if _session is None:
+        with _session_lock:
+            # Double-check locking pattern
+            if _session is None:
+                _session = requests.Session()
+                _session.headers.update({
+                    "Authorization": f"Bearer {T_INVEST_API_KEY}",
+                    "Content-Type": "application/json"
+                })
+                logger.info("Создана новая глобальная HTTP-сессия")
+    return _session
+
+
+def clear_cache():
+    """Очищает весь кэш. Thread-safe."""
+    global _cache
+    with _cache_lock:
+        _cache = {}
+        logger.info("Кэш очищен")
+
 
 def get_accounts() -> List[Dict]:
     """
@@ -41,20 +83,16 @@ def get_accounts() -> List[Dict]:
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.UsersService/GetAccounts"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {}
+
+    session = get_session()
 
     try:
         logger.info("🔍 Запрос списка счетов пользователя")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )
@@ -103,23 +141,19 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {
         "accountId": account_id,
         "currency": currency
     }
 
+    session = get_session()
+
     try:
         logger.info(f"🔍 Запрос портфеля для счёта {account_id}")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )
@@ -153,19 +187,26 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
         return None
 
 
-def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optional[Dict], Optional[str]]:
+def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> Tuple[List[Dict], Optional[Dict], Optional[str]]:
     """
-    Получает список позиций в портфеле пользователя.
+    Получает список позиций в портфеле пользователя с кэшированием.
     Если account_id не указан, берётся первый доступный счёт.
 
     Args:
         account_id: Идентификатор счёта (опционально)
+        use_cache: Использовать ли кэш данных портфеля. По умолчанию True.
+            При True данные кэшируются на _cache_ttl секунд (30 сек).
+            При False всегда делается свежий запрос к API.
 
     Returns:
         Tuple[List[Dict], Optional[Dict], Optional[str]]:
             - Список позиций (акций) в портфеле, включая подарочные
             - Исходный объект портфеля
             - Идентификатор используемого счёта
+    
+    Note:
+        Кэшированные данные используются для уменьшения нагрузки на API
+        и ускорения повторных запросов в течение TTL.
     """
     # Если account_id не указан, получаем первый счёт
     if not account_id:
@@ -175,6 +216,18 @@ def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optiona
             return [], None, None
         account_id = accounts[0].get("id")
         logger.info(f"✅ Используется счёт: {account_id}")
+
+    # Проверяем кэш (thread-safe)
+    cache_key = f"portfolio_{account_id}"
+    now = time.time()
+    
+    if use_cache:
+        with _cache_lock:
+            if cache_key in _cache:
+                data, timestamp = _cache[cache_key]
+                if now - timestamp < _cache_ttl:
+                    logger.info(f"Используются кэшированные данные портфеля (возраст: {now - timestamp:.1f}s)")
+                    return data
 
     # Получаем портфель
     portfolio = get_portfolio(account_id)
@@ -214,7 +267,16 @@ def get_portfolio_positions(account_id: str = None) -> Tuple[List[Dict], Optiona
         f"✅ Найдено {len(all_shares)} акций в портфеле "
         f"(обычных: {len(shares)}, подарочных: {len(virtual_shares)})"
     )
-    return all_shares, portfolio, account_id
+    
+    result = (all_shares, portfolio, account_id)
+    
+    # Сохраняем в кэш (thread-safe)
+    if use_cache:
+        with _cache_lock:
+            _cache[cache_key] = (result, now)
+            logger.info("Данные портфеля сохранены в кэш")
+    
+    return result
 
 
 def get_withdraw_limits(account_id: str) -> Optional[Dict]:
@@ -229,20 +291,16 @@ def get_withdraw_limits(account_id: str) -> Optional[Dict]:
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.OperationsService/GetWithdrawLimits"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {"accountId": account_id}
+
+    session = get_session()
 
     try:
         logger.info(f"🔍 Запрос лимитов на вывод для счёта {account_id}")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )
@@ -294,22 +352,18 @@ def fetch_shares(instrument_status: str = "INSTRUMENT_STATUS_BASE") -> List[Dict
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {
         "instrument_status": instrument_status
     }
 
+    session = get_session()
+
     try:
         logger.info(f"Запрос списка акций с статусом: {instrument_status}")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )
@@ -343,24 +397,20 @@ def get_share_info(figi: str) -> Optional[Dict]:
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.InstrumentsService/ShareBy"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {
         "id_type": "INSTRUMENT_ID_TYPE_FIGI",
         "class_code": "",
         "id": figi
     }
 
+    session = get_session()
+
     try:
         logger.info(f"Запрос информации об акции с FIGI: {figi}")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )
@@ -394,22 +444,18 @@ def get_last_prices(figis: List[str]) -> Optional[Dict]:
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.MarketDataService/GetLastPrices"
 
-    headers = {
-        "Authorization": f"Bearer {T_INVEST_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
     body = {
         "instrument_id": figis
     }
 
+    session = get_session()
+
     try:
         logger.info(f"Запрос последних цен для {len(figis)} инструментов")
 
-        response = requests.post(
+        response = session.post(
             url,
             json=body,
-            headers=headers,
             timeout=10,
             verify=SSL_VERIFY
         )

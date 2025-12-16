@@ -69,6 +69,28 @@ def format_money(value: float, currency: str = "RUB") -> str:
     return f"{value:,.2f} {symbol}".replace(",", " ")
 
 
+def format_quantity_display(quantity: float, is_virtual: bool) -> str:
+    """
+    Форматирует количество акций для отображения.
+    
+    Для подарочных (виртуальных) акций с дробной частью показывает
+    дробное число (например, "5.50"), для остальных случаев - целое ("5").
+    
+    Args:
+        quantity: Количество акций
+        is_virtual: Флаг подарочной позиции
+    
+    Returns:
+        str: Отформатированное количество
+    """
+    if isinstance(quantity, (int, float)) and is_virtual and quantity != int(quantity):
+        return f"{quantity:.2f}"
+    elif isinstance(quantity, (int, float)):
+        return str(int(quantity))
+    else:
+        return "N/A"
+
+
 def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyboardMarkup:
     """
     Создаёт клавиатуру с акциями из портфеля.
@@ -92,7 +114,8 @@ def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyb
 
             # Создаём текст кнопки с тикером и количеством
             prefix = "🎁 " if is_virtual else ""
-            button_text = f"{prefix}{ticker} ({int(quantity)} шт.)"
+            qty_str = format_quantity_display(quantity, is_virtual)
+            button_text = f"{prefix}{ticker} ({qty_str} шт.)"
 
             button = telebot.types.InlineKeyboardButton(
                 text=button_text,
@@ -239,8 +262,8 @@ def stock_handler(call, bot):
         except Exception as e:
             logger.warning(f"Не удалось удалить сообщение портфеля: {e}")
 
-        # Получаем позиции портфеля для информации о количестве
-        positions, _, _ = get_portfolio_positions()
+        # Получаем позиции портфеля из кэша (использует кэш если доступен)
+        positions, _, _ = get_portfolio_positions(use_cache=True)
         position_info = None
         for pos in positions:
             if pos.get("figi") == figi:
@@ -319,7 +342,11 @@ def stock_handler(call, bot):
             pl_emoji = "➡️ "
             pl_color = "⚪"
 
-        gift_label = "🎁 Подарочная позиция\n" if position_info.get("is_virtual") else ""
+        is_virtual = position_info.get("is_virtual", False)
+        gift_label = "🎁 Подарочная позиция\n" if is_virtual else ""
+        
+        # Форматируем количество с помощью вспомогательной функции
+        qty_display = format_quantity_display(quantity, is_virtual)
 
         # Формируем сообщение с информацией
         message = (
@@ -328,7 +355,7 @@ def stock_handler(call, bot):
             f"🏷️ **Тикер:** `{ticker}`\n"
             f"📝 **Название:** {name}\n"
             f"💰 **Валюта:** {currency}\n\n"
-            f"📦 **Количество:** {int(quantity)} шт.\n"
+            f"📦 **Количество:** {qty_display} шт.\n"
             f"💵 **Средняя цена покупки:** {format_money(average_price, currency)}\n"
             f"💳 **Текущая цена:** {format_money(current_price, currency)}\n\n"
             f"📊 **Стоимость покупки:** {format_money(total_buy_value, currency)}\n"

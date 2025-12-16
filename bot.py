@@ -6,6 +6,24 @@ import sys
 from handlers.start_handler import start_handler
 from handlers.phone_handler import phone_handler
 from handlers.stock_handler import handle_stock_callback
+from datetime import datetime
+
+# Получаем текущую дату и время
+current_time = datetime.now()
+date_str = current_time.strftime('%Y-%m-%d')  # Форматируем текущую дату
+hour_str = current_time.strftime('%H')  # Форматируем текущий час
+
+# Создаем путь до папки для логов с разделением по дням и часам
+log_dir = 'logs'
+day_dir = os.path.join(log_dir, date_str)  # Папка для конкретного дня
+hour_dir = os.path.join(day_dir, hour_str)  # Папка для конкретного часа
+
+# Проверяем и создаем все необходимые папки
+os.makedirs(hour_dir, exist_ok=True)
+
+# Настройка логирования с уникальными именами файлов
+log_filename = f"{current_time.strftime('%H-%M-%S')}_bot.log"  # Имя файла с временем
+log_filepath = os.path.join(hour_dir, log_filename)  # Полный путь до файла лога
 
 # Настройка логирования
 logging.basicConfig(
@@ -13,10 +31,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('bot.log', encoding='utf-8')
+        logging.FileHandler(log_filepath, encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
+
+logger.info(f"Логирование запущено. Логи будут сохраняться в: {log_filepath}")
 
 # Загружаем переменные окружения
 load_dotenv()

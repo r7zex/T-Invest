@@ -86,6 +86,32 @@ def callback_handler(call):
     handle_stock_callback(call, bot)
 
 
+@bot.message_handler(func=lambda message: message.text == "📊 Меню")
+def menu_handler(message):
+    """Обработчик кнопки Меню"""
+    logger.info(f"Пользователь {message.from_user.id} открыл меню")
+    
+    # Создаём inline клавиатуру с опциями меню
+    markup = telebot.types.InlineKeyboardMarkup()
+    portfolio_button = telebot.types.InlineKeyboardButton(
+        "💼 Портфель",
+        callback_data="view_stocks"
+    )
+    balance_dynamics_button = telebot.types.InlineKeyboardButton(
+        "📈 Динамика баланса",
+        callback_data="balance_dynamics::1w"
+    )
+    markup.add(portfolio_button)
+    markup.add(balance_dynamics_button)
+    
+    bot.send_message(
+        message.chat.id,
+        "📊 Главное меню\n\n"
+        "Выберите действие:",
+        reply_markup=markup
+    )
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
     """Обработчик всех остальных сообщений"""
@@ -97,7 +123,7 @@ def handle_all_messages(message):
     bot.send_message(
         message.chat.id,
         "🤔 Я не понимаю эту команду.\n\n"
-        "Используйте /start для начала работы."
+        "Используйте /start для начала работы или кнопку '📊 Меню'."
     )
 
 

@@ -83,26 +83,17 @@ def phone_handler(message, bot):
     if normalized_user_phone == normalized_allowed_phone:
         logger.info(f"Пользователь {user_id} успешно авторизован ✅")
 
+        # Создаём ReplyKeyboard с кнопкой "Меню"
+        reply_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+        menu_button = telebot.types.KeyboardButton("📊 Меню")
+        reply_markup.add(menu_button)
+
         bot.send_message(
             message.chat.id,
             "✅ Доступ разрешен!\n\n"
             "Отлично, теперь вы можете использовать все возможности бота! 🎉\n\n"
-            "Нажмите на кнопку ниже, чтобы посмотреть свой инвестиционный портфель 💼"
-        )
-
-        # Отправляем кнопку для просмотра портфеля
-        markup = telebot.types.InlineKeyboardMarkup()
-        button = telebot.types.InlineKeyboardButton(
-            "💼 Мой портфель",
-            callback_data="view_stocks"
-        )
-        markup.add(button)
-
-        bot.send_message(
-            message.chat.id,
-            "Готовы посмотреть свои акции? "
-            "Нажмите кнопку ниже! 📊",
-            reply_markup=markup
+            "Используйте кнопку '📊 Меню' для доступа к функциям бота.",
+            reply_markup=reply_markup
         )
     else:
         logger.warning(

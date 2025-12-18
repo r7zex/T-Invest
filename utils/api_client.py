@@ -3,6 +3,7 @@ import os
 import logging
 import time
 import threading
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
@@ -512,7 +513,6 @@ def get_portfolio_history(
                 current_balance = format_quotation(total_amount)
         
         # Определяем интервал на основе разницы дат
-        from datetime import datetime
         start = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
         end = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
         diff_days = (end - start).days
@@ -571,7 +571,6 @@ def get_portfolio_history(
                 value_by_time[timestamp] += quantity * close_price
         
         # Преобразуем в список отсортированных значений
-        from datetime import datetime
         history = []
         for timestamp_str, value in sorted(value_by_time.items()):
             try:
@@ -620,7 +619,7 @@ def format_quotation(quotation: Dict) -> float:
     except (ValueError, TypeError):
         nano = 0
     
-    # Преобразуем nano (наносекунды) в дробную часть
+    # Преобразуем nano (дробная часть в единицах 10^-9) в дробную часть
     value = units + (nano / 1_000_000_000)
     
     return value

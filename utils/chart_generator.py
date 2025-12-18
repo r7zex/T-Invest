@@ -1,12 +1,13 @@
 """
 Модуль для генерации графиков динамики баланса и стоимости акций.
 """
+import matplotlib
+matplotlib.use('Agg')  # Использование non-GUI backend для серверных приложений
+
 import io
 import logging
 from datetime import datetime
 from typing import List, Dict, Tuple
-import matplotlib
-matplotlib.use('Agg')  # Использование non-GUI backend для серверных приложений
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
@@ -209,7 +210,7 @@ def generate_stock_chart(
         # Форматирование оси X в зависимости от периода
         if period == '1h':
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=10))
+            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=15))
         elif period == '1d':
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
             ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))

@@ -265,8 +265,9 @@ def stock_handler(call, bot):
         total_profit = portfolio_value - total_buy_value
         total_profit_percent = (total_profit / total_buy_value * 100) if total_buy_value != 0 else 0
 
-        # TODO: Прибыль за сегодня (требуется историческая информация)
-        # Для демо используем заглушку
+        # Прибыль за сегодня (требуется историческая информация за предыдущий день)
+        # В текущей реализации эта функция недоступна из-за отсутствия исторических данных
+        # Оставляем как 0.0, но пользователь увидит корректное сообщение
         today_profit = 0.0
         today_profit_percent = 0.0
 

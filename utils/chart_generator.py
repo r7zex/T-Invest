@@ -38,6 +38,64 @@ def format_currency(value: float, currency: str = "RUB") -> str:
     return f"{value:,.0f}{symbol}"
 
 
+def _find_trend_segments(timestamps: List[datetime], values: List[float]) -> List[Tuple[int, int]]:
+    """
+    Определяет сегменты тренда на графике.
+    
+    Алгоритм находит точки разворота тренда используя скользящее окно
+    и изменение направления движения цены.
+    
+    Args:
+        timestamps: Список временных меток
+        values: Список значений
+        
+    Returns:
+        List[Tuple[int, int]]: Список сегментов в виде (начало, конец)
+    """
+    if len(values) < 2:
+        return []
+    
+    if len(values) < 3:
+        return [(0, len(values) - 1)]
+    
+    segments = []
+    window_size = max(3, len(values) // 10)  # Размер окна для определения тренда
+    
+    start_idx = 0
+    current_trend = None  # None, 'up', 'down'
+    
+    for i in range(1, len(values)):
+        # Определяем локальный тренд
+        if i < window_size:
+            local_values = values[:i+1]
+        else:
+            local_values = values[i-window_size:i+1]
+        
+        # Линейная регрессия для определения направления
+        if len(local_values) >= 2:
+            # Защита от деления на ноль
+            value_diff = local_values[-1] - local_values[0]
+            avg_change = value_diff / len(local_values) if len(local_values) > 0 else 0
+            new_trend = 'up' if avg_change > 0 else 'down'
+            
+            # Если тренд изменился, создаем новый сегмент
+            if current_trend is not None and new_trend != current_trend and i - start_idx > window_size:
+                segments.append((start_idx, i - 1))
+                start_idx = i - 1
+            
+            current_trend = new_trend
+    
+    # Добавляем последний сегмент
+    if start_idx < len(values):
+        segments.append((start_idx, len(values) - 1))
+    
+    # Если сегментов получилось слишком много, объединяем короткие
+    if len(segments) > 5:
+        return [(0, len(values) - 1)]
+    
+    return segments
+
+
 def generate_balance_chart(
     data: List[Dict],
     period: str = "1d",
@@ -72,12 +130,36 @@ def generate_balance_chart(
         ax.set_facecolor('#ffffff')
         
         # Строим график
-        ax.plot(timestamps, values, linewidth=2.5, color='#3b82f6', label='Баланс портфеля')
+        ax.plot(timestamps, values, linewidth=2.5, color='#3b82f6', label='Баланс портфеля', zorder=2)
         
-        # Линия среднего значения
-        avg_value = sum(values) / len(values)
-        ax.axhline(y=avg_value, color='#64748b', linestyle='--', linewidth=1.5, 
-                   label=f'Среднее: {format_currency(avg_value, currency)}')
+        # Находим сегменты тренда
+        segments = _find_trend_segments(timestamps, values)
+        
+        # Рисуем линии тренда для каждого сегмента
+        for start_idx, end_idx in segments:
+            # Пропускаем сегменты с одной точкой или недостаточными данными
+            if end_idx <= start_idx:
+                continue
+            
+            segment_times = timestamps[start_idx:end_idx+1]
+            segment_values = values[start_idx:end_idx+1]
+            
+            # Рассчитываем линию тренда (линейная регрессия)
+            if len(segment_values) >= 2:
+                # Простая линейная аппроксимация
+                y1, y2 = segment_values[0], segment_values[-1]
+                
+                # Определяем цвет тренда
+                trend_color = '#10b981' if y2 >= y1 else '#ef4444'
+                
+                # Рисуем линию тренда
+                ax.plot([segment_times[0], segment_times[-1]], 
+                       [y1, y2],
+                       color=trend_color, 
+                       linestyle='--', 
+                       linewidth=2,
+                       alpha=0.7,
+                       zorder=1)
         
         # Рассчитываем прибыль/убыток
         start_value = values[0]
@@ -85,10 +167,11 @@ def generate_balance_chart(
         profit_loss = end_value - start_value
         profit_loss_percent = (profit_loss / start_value * 100) if start_value != 0 else 0
         
-        # Определяем цвет для легенды
+        # Определяем цвет и эмодзи для легенды
         pl_color = '#10b981' if profit_loss >= 0 else '#ef4444'
         pl_sign = '+' if profit_loss >= 0 else ''
-        pl_label = f'Изменение: {pl_sign}{format_currency(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
+        pl_emoji = '📈' if profit_loss >= 0 else '📉'
+        pl_label = f'{pl_emoji} {pl_sign}{format_currency(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
         
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pl_color, linewidth=3, label=pl_label)
@@ -181,12 +264,36 @@ def generate_stock_chart(
         ax.set_facecolor('#ffffff')
         
         # Строим график
-        ax.plot(timestamps, prices, linewidth=2.5, color='#8b5cf6', label=f'Цена {ticker}')
+        ax.plot(timestamps, prices, linewidth=2.5, color='#8b5cf6', label=f'Цена {ticker}', zorder=2)
         
-        # Линия среднего значения
-        avg_price = sum(prices) / len(prices)
-        ax.axhline(y=avg_price, color='#64748b', linestyle='--', linewidth=1.5, 
-                   label=f'Среднее: {format_currency(avg_price, currency)}')
+        # Находим сегменты тренда
+        segments = _find_trend_segments(timestamps, prices)
+        
+        # Рисуем линии тренда для каждого сегмента
+        for start_idx, end_idx in segments:
+            # Пропускаем сегменты с одной точкой или недостаточными данными
+            if end_idx <= start_idx:
+                continue
+            
+            segment_times = timestamps[start_idx:end_idx+1]
+            segment_prices = prices[start_idx:end_idx+1]
+            
+            # Рассчитываем линию тренда (линейная регрессия)
+            if len(segment_prices) >= 2:
+                # Простая линейная аппроксимация
+                y1, y2 = segment_prices[0], segment_prices[-1]
+                
+                # Определяем цвет тренда
+                trend_color = '#10b981' if y2 >= y1 else '#ef4444'
+                
+                # Рисуем линию тренда
+                ax.plot([segment_times[0], segment_times[-1]], 
+                       [y1, y2],
+                       color=trend_color, 
+                       linestyle='--', 
+                       linewidth=2,
+                       alpha=0.7,
+                       zorder=1)
         
         # Рассчитываем прибыль/убыток
         start_price = prices[0]
@@ -194,10 +301,11 @@ def generate_stock_chart(
         price_change = end_price - start_price
         price_change_percent = (price_change / start_price * 100) if start_price != 0 else 0
         
-        # Определяем цвет для легенды
+        # Определяем цвет и эмодзи для легенды
         pc_color = '#10b981' if price_change >= 0 else '#ef4444'
         pc_sign = '+' if price_change >= 0 else ''
-        pc_label = f'Изменение: {pc_sign}{format_currency(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
+        pc_emoji = '📈' if price_change >= 0 else '📉'
+        pc_label = f'{pc_emoji} {pc_sign}{format_currency(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
         
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pc_color, linewidth=3, label=pc_label)

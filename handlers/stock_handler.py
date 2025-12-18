@@ -1,48 +1,19 @@
 import telebot
 import logging
-from typing import List, Dict
+from typing import List, Dict, Tuple
+from datetime import datetime, timedelta
 from utils.api_client import (
     get_portfolio_positions,
     get_share_info,
     get_last_prices,
-    get_withdraw_limits
+    get_withdraw_limits,
+    format_quotation,
+    get_candles,
+    get_portfolio_history
 )
+from utils.chart_generator import generate_balance_chart, generate_stock_chart
 
 logger = logging.getLogger(__name__)
-
-
-def format_quotation(quotation: Dict) -> float:
-    """
-    Форматирует объект Quotation в число.
-
-    Args:
-        quotation: Объект с полями units и nano
-
-    Returns:
-        float: Значение в виде числа
-    """
-    if not quotation:
-        return 0.0
-
-    # Получаем units и nano
-    units = quotation.get("units", 0)
-    nano = quotation.get("nano", 0)
-
-    # Преобразуем в числа, если пришли строки
-    try:
-        units = int(units) if units else 0
-    except (ValueError, TypeError):
-        units = 0
-
-    try:
-        nano = int(nano) if nano else 0
-    except (ValueError, TypeError):
-        nano = 0
-
-    # Преобразуем nano (наносекунды) в дробную часть
-    value = units + (nano / 1_000_000_000)
-
-    return value
 
 
 def format_money(value: float, currency: str = "RUB") -> str:
@@ -91,17 +62,64 @@ def format_quantity_display(quantity: float, is_virtual: bool) -> str:
         return "N/A"
 
 
-def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyboardMarkup:
+def calculate_position_growth(position: Dict, current_price: float) -> Tuple[float, float]:
+    """
+    Рассчитывает абсолютный и относительный рост позиции.
+    
+    Args:
+        position: Позиция из портфеля
+        current_price: Текущая цена акции
+        
+    Returns:
+        Tuple[float, float]: (абсолютный рост, относительный рост в %)
+    """
+    quantity = format_quotation(position.get("quantity", {}))
+    average_price = format_quotation(position.get("averagePositionPrice", {}))
+    
+    current_value = quantity * current_price
+    buy_value = quantity * average_price
+    
+    absolute_growth = current_value - buy_value
+    relative_growth = (absolute_growth / buy_value * 100) if buy_value != 0 else 0
+    
+    return absolute_growth, relative_growth
+
+
+def create_portfolio_keyboard(
+    positions: List[Dict],
+    prices_data: Dict = None
+) -> telebot.types.InlineKeyboardMarkup:
     """
     Создаёт клавиатуру с акциями из портфеля.
 
     Args:
         positions: Список позиций из портфеля
+        prices_data: Данные о текущих ценах акций
 
     Returns:
         InlineKeyboardMarkup: Клавиатура с кнопками
     """
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+
+    # Добавляем кнопки навигации в начале
+    menu_button = telebot.types.InlineKeyboardButton(
+        "📊 В меню",
+        callback_data="main_menu"
+    )
+    dynamics_button = telebot.types.InlineKeyboardButton(
+        "📈 К динамике баланса",
+        callback_data="balance_dynamics::1w"
+    )
+    markup.add(menu_button)
+    markup.add(dynamics_button)
+
+    # Получаем цены
+    price_map = {}
+    if prices_data and "last_prices" in prices_data:
+        for price_item in prices_data["last_prices"]:
+            figi = price_item.get("figi")
+            price = format_quotation(price_item.get("price", {}))
+            price_map[figi] = price
 
     buttons = []
     for position in positions:
@@ -111,11 +129,34 @@ def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyb
             figi = position.get("figi", ticker)
             quantity = format_quotation(position.get("quantity", {}))
             is_virtual = position.get("is_virtual", False)
+            
+            # Получаем текущую цену
+            current_price = price_map.get(figi, 0)
+            if current_price == 0:
+                current_price = format_quotation(position.get("currentPrice", {}))
 
-            # Создаём текст кнопки с тикером и количеством
+            # Создаём текст кнопки с тикером, количеством и ростом
             prefix = "🎁 " if is_virtual else ""
             qty_str = format_quantity_display(quantity, is_virtual)
-            button_text = f"{prefix}{ticker} ({qty_str} шт.)"
+            
+            # Рассчитываем рост/падение
+            if current_price > 0:
+                absolute_growth, relative_growth = calculate_position_growth(position, current_price)
+                
+                # Форматируем знак и эмодзи
+                sign = "+" if absolute_growth >= 0 else ""
+                emoji = "📈" if absolute_growth >= 0 else "📉"
+                
+                currency = position.get("currency", "RUB")
+                currency_symbol = "₽" if currency == "RUB" else currency
+                
+                button_text = (
+                    f"{prefix}{ticker} ({int(quantity)}) "
+                    f"{sign}{relative_growth:.1f}% "
+                    f"{sign}{absolute_growth:.0f}{currency_symbol}"
+                )
+            else:
+                button_text = f"{prefix}{ticker} ({qty_str} шт.)"
 
             button = telebot.types.InlineKeyboardButton(
                 text=button_text,
@@ -126,7 +167,7 @@ def create_portfolio_keyboard(positions: List[Dict]) -> telebot.types.InlineKeyb
             logger.error(f"Ошибка при создании кнопки для позиции: {e}")
             continue
 
-    # Добавляем кнопки по 2 в ряд
+    # Добавляем кнопки с акциями по 2 в ряд
     for i in range(0, len(buttons), 2):
         markup.row(*buttons[i:i + 2])
 
@@ -191,20 +232,72 @@ def stock_handler(call, bot):
             if current_balance:
                 reserved_balance = (0.0, current_balance[1])
 
-        # Создаём клавиатуру с акциями из портфеля
-        markup = create_portfolio_keyboard(positions)
+        # Получаем текущие цены для всех позиций
+        figis = [pos.get("figi") for pos in positions if pos.get("figi")]
+        prices_data = get_last_prices(figis) if figis else None
 
-        message_lines = [f"💼 Ваш портфель ({len(positions)} позиций) 📈"]
+        # Рассчитываем общую стоимость портфеля и прибыль/убыток
+        portfolio_value = 0.0
+        total_buy_value = 0.0
+        currency = "RUB"
+
+        price_map = {}
+        if prices_data and "last_prices" in prices_data:
+            for price_item in prices_data["last_prices"]:
+                figi = price_item.get("figi")
+                price = format_quotation(price_item.get("price", {}))
+                price_map[figi] = price
+
+        for position in positions:
+            figi = position.get("figi")
+            quantity = format_quotation(position.get("quantity", {}))
+            average_price = format_quotation(position.get("averagePositionPrice", {}))
+            currency = position.get("currency", "RUB")
+            
+            current_price = price_map.get(figi, 0)
+            if current_price == 0:
+                current_price = format_quotation(position.get("currentPrice", {}))
+            
+            portfolio_value += quantity * current_price
+            total_buy_value += quantity * average_price
+
+        # Прибыль за всё время
+        total_profit = portfolio_value - total_buy_value
+        total_profit_percent = (total_profit / total_buy_value * 100) if total_buy_value != 0 else 0
+
+        # TODO: Прибыль за сегодня (требуется историческая информация)
+        # Для демо используем заглушку
+        today_profit = 0.0
+        today_profit_percent = 0.0
+
+        # Создаём клавиатуру с акциями из портфеля
+        markup = create_portfolio_keyboard(positions, prices_data)
+
+        message_lines = [f"💼 Ваш портфель ({len(positions)} позиций) 📈\n"]
 
         if current_balance:
-            amount, currency = current_balance
-            message_lines.append(f"💳 Текущий баланс: {format_money(amount, currency)}")
+            amount, curr = current_balance
+            message_lines.append(f"💳 Текущий баланс: {format_money(amount, curr)}")
 
-        if reserved_balance:
-            amount, currency = reserved_balance
-            message_lines.append(f"⏸️ Зарезервированный баланс: {format_money(amount, currency)}")
+        message_lines.append(f"💎 Стоимость портфеля: {format_money(portfolio_value, currency)}")
 
-        message_lines.append("Выберите акцию для просмотра подробной информации:")
+        # Прибыль за всё время
+        profit_sign = "+" if total_profit >= 0 else ""
+        profit_emoji = "📈" if total_profit >= 0 else "📉"
+        message_lines.append(
+            f"{profit_emoji} Прибыль за всё время: {profit_sign}{format_money(total_profit, currency)} "
+            f"({profit_sign}{total_profit_percent:.2f}%)"
+        )
+
+        # Изменение за сегодня
+        today_sign = "+" if today_profit >= 0 else ""
+        today_emoji = "📊" if today_profit >= 0 else "📉"
+        message_lines.append(
+            f"{today_emoji} Изменение за сегодня: {today_sign}{format_money(today_profit, currency)} "
+            f"({today_sign}{today_profit_percent:.2f}%)"
+        )
+
+        message_lines.append("\nВыберите акцию для просмотра:")
 
         bot.send_message(
             call.message.chat.id,
@@ -329,12 +422,17 @@ def stock_handler(call, bot):
             f"🔖 **FIGI:** `{figi}`"
         )
 
-        # Добавляем кнопку возврата к портфелю
+        # Добавляем кнопки навигации
         markup = telebot.types.InlineKeyboardMarkup()
+        dynamics_button = telebot.types.InlineKeyboardButton(
+            "📈 Динамика акции",
+            callback_data=f"stock_dynamics::{figi}::1w"
+        )
         back_button = telebot.types.InlineKeyboardButton(
             "⬅️ К портфелю",
             callback_data="view_stocks"
         )
+        markup.add(dynamics_button)
         markup.add(back_button)
 
         bot.send_message(
@@ -343,6 +441,231 @@ def stock_handler(call, bot):
             parse_mode="Markdown",
             reply_markup=markup
         )
+
+    # Обработка возврата в главное меню
+    elif call.data == "main_menu":
+        logger.info(f"Пользователь {call.from_user.id} вернулся в главное меню")
+        
+        # Удаляем предыдущее сообщение
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение: {e}")
+        
+        # Создаём inline клавиатуру с опциями меню
+        markup = telebot.types.InlineKeyboardMarkup()
+        portfolio_button = telebot.types.InlineKeyboardButton(
+            "💼 Портфель",
+            callback_data="view_stocks"
+        )
+        balance_dynamics_button = telebot.types.InlineKeyboardButton(
+            "📈 Динамика баланса",
+            callback_data="balance_dynamics::1w"
+        )
+        markup.add(portfolio_button)
+        markup.add(balance_dynamics_button)
+        
+        bot.send_message(
+            call.message.chat.id,
+            "📊 Главное меню\n\n"
+            "Выберите действие:",
+            reply_markup=markup
+        )
+
+    # Обработка просмотра динамики баланса
+    elif call.data.startswith("balance_dynamics::"):
+        period = call.data.split("::")[1]
+        logger.info(f"Пользователь {call.from_user.id} запросил динамику баланса за период {period}")
+        
+        # Показываем индикатор загрузки
+        bot.answer_callback_query(call.id, "⏳ Загружаю данные...")
+        
+        # Удаляем предыдущее сообщение
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение: {e}")
+        
+        # Определяем временной интервал
+        now = datetime.utcnow()
+        period_map = {
+            "1h": (now - timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
+            "1d": (now - timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
+            "1w": (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
+            "1m": (now - timedelta(days=30), "CANDLE_INTERVAL_DAY"),
+            "1y": (now - timedelta(days=365), "CANDLE_INTERVAL_DAY")
+        }
+        
+        from_date, interval = period_map.get(period, (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        from_date_str = from_date.isoformat() + "Z"
+        to_date_str = now.isoformat() + "Z"
+        
+        # Получаем историю портфеля
+        positions, portfolio, account_id = get_portfolio_positions(use_cache=False)
+        history = get_portfolio_history(account_id, from_date_str, to_date_str) if account_id else None
+        
+        if history and len(history) > 0:
+            # Генерируем график
+            chart_bytes = generate_balance_chart(history, period)
+            
+            # Создаём клавиатуру с выбором периода
+            markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+            
+            # Кнопки периодов (исключая текущий)
+            period_buttons = []
+            periods = [("1ч", "1h"), ("1д", "1d"), ("1Н", "1w"), ("1М", "1m"), ("1Г", "1y")]
+            for label, p in periods:
+                if p != period:
+                    period_buttons.append(
+                        telebot.types.InlineKeyboardButton(label, callback_data=f"balance_dynamics::{p}")
+                    )
+            
+            # Добавляем кнопки периодов по 2 в ряд
+            for i in range(0, len(period_buttons), 2):
+                markup.row(*period_buttons[i:i + 2])
+            
+            # Кнопки навигации
+            portfolio_btn = telebot.types.InlineKeyboardButton(
+                "💼 К портфелю",
+                callback_data="view_stocks"
+            )
+            menu_btn = telebot.types.InlineKeyboardButton(
+                "📊 Меню",
+                callback_data="main_menu"
+            )
+            markup.add(portfolio_btn)
+            markup.add(menu_btn)
+            
+            # Отправляем график
+            bot.send_photo(
+                call.message.chat.id,
+                chart_bytes,
+                caption=f"📈 Динамика баланса за период: {period}",
+                reply_markup=markup
+            )
+        else:
+            bot.send_message(
+                call.message.chat.id,
+                "❌ Не удалось получить историю баланса портфеля.\n\n"
+                "Возможно, недостаточно данных для построения графика."
+            )
+
+    # Обработка просмотра динамики акции
+    elif call.data.startswith("stock_dynamics::"):
+        parts = call.data.split("::")
+        figi = parts[1]
+        period = parts[2] if len(parts) > 2 else "1w"
+        
+        logger.info(f"Пользователь {call.from_user.id} запросил динамику акции {figi} за период {period}")
+        
+        # Показываем индикатор загрузки
+        bot.answer_callback_query(call.id, "⏳ Загружаю данные...")
+        
+        # Удаляем предыдущее сообщение
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение: {e}")
+        
+        # Получаем информацию об акции
+        share_info = get_share_info(figi)
+        ticker = share_info.get("ticker", "N/A") if share_info else "N/A"
+        currency = share_info.get("currency", "RUB") if share_info else "RUB"
+        
+        # Определяем временной интервал
+        now = datetime.utcnow()
+        period_map = {
+            "1h": (now - timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
+            "1d": (now - timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
+            "1w": (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
+            "1m": (now - timedelta(days=30), "CANDLE_INTERVAL_DAY"),
+            "1y": (now - timedelta(days=365), "CANDLE_INTERVAL_DAY")
+        }
+        
+        from_date, interval = period_map.get(period, (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        from_date_str = from_date.isoformat() + "Z"
+        to_date_str = now.isoformat() + "Z"
+        
+        # Получаем исторические свечи
+        candles = get_candles(figi, from_date_str, to_date_str, interval)
+        
+        if candles and len(candles) > 0:
+            # Преобразуем свечи в формат для графика
+            history = []
+            for candle in candles:
+                timestamp_str = candle.get("time")
+                close_price = format_quotation(candle.get("close", {}))
+                
+                if timestamp_str and close_price > 0:
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        history.append({
+                            'timestamp': timestamp,
+                            'price': close_price
+                        })
+                    except Exception as e:
+                        logger.warning(f"Не удалось преобразовать timestamp {timestamp_str}: {e}")
+                        continue
+            
+            if history:
+                # Генерируем график
+                chart_bytes = generate_stock_chart(figi, history, period, ticker, currency)
+                
+                # Создаём клавиатуру с выбором периода
+                markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+                
+                # Кнопки периодов (исключая текущий)
+                period_buttons = []
+                periods = [("1ч", "1h"), ("1д", "1d"), ("1Н", "1w"), ("1М", "1m"), ("1Г", "1y")]
+                for label, p in periods:
+                    if p != period:
+                        period_buttons.append(
+                            telebot.types.InlineKeyboardButton(
+                                label, 
+                                callback_data=f"stock_dynamics::{figi}::{p}"
+                            )
+                        )
+                
+                # Добавляем кнопки периодов по 2 в ряд
+                for i in range(0, len(period_buttons), 2):
+                    markup.row(*period_buttons[i:i + 2])
+                
+                # Кнопки навигации
+                stock_info_btn = telebot.types.InlineKeyboardButton(
+                    "📊 К акции",
+                    callback_data=f"portfolio_select::{figi}"
+                )
+                portfolio_btn = telebot.types.InlineKeyboardButton(
+                    "💼 К портфелю",
+                    callback_data="view_stocks"
+                )
+                menu_btn = telebot.types.InlineKeyboardButton(
+                    "📊 В меню",
+                    callback_data="main_menu"
+                )
+                markup.add(stock_info_btn)
+                markup.add(portfolio_btn)
+                markup.add(menu_btn)
+                
+                # Отправляем график
+                bot.send_photo(
+                    call.message.chat.id,
+                    chart_bytes,
+                    caption=f"📈 Динамика цены {ticker} за период: {period}",
+                    reply_markup=markup
+                )
+            else:
+                bot.send_message(
+                    call.message.chat.id,
+                    f"❌ Не удалось построить график для {ticker}.\n\n"
+                    "Данные о ценах недоступны."
+                )
+        else:
+            bot.send_message(
+                call.message.chat.id,
+                f"❌ Не удалось получить историю цен для {ticker}.\n\n"
+                "Возможно, недостаточно данных для построения графика."
+            )
 
 
 def handle_stock_callback(call, bot):

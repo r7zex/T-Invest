@@ -412,3 +412,215 @@ def get_last_prices(figis: List[str]) -> Optional[Dict]:
     except requests.exceptions.RequestException as err:
         logger.error(f"Ошибка при запросе последних цен: {err}")
         return None
+
+
+def get_candles(
+    figi: str,
+    from_date: str,
+    to_date: str,
+    interval: str = "CANDLE_INTERVAL_DAY"
+) -> Optional[List[Dict]]:
+    """
+    Получает исторические свечи для инструмента.
+    
+    Args:
+        figi: Идентификатор финансового инструмента
+        from_date: Начальная дата в формате ISO 8601 (например, '2024-01-01T00:00:00Z')
+        to_date: Конечная дата в формате ISO 8601
+        interval: Интервал свечей:
+            - CANDLE_INTERVAL_1_MIN: 1 минута
+            - CANDLE_INTERVAL_5_MIN: 5 минут
+            - CANDLE_INTERVAL_15_MIN: 15 минут
+            - CANDLE_INTERVAL_HOUR: 1 час
+            - CANDLE_INTERVAL_DAY: 1 день (по умолчанию)
+            - CANDLE_INTERVAL_WEEK: 1 неделя
+            - CANDLE_INTERVAL_MONTH: 1 месяц
+    
+    Returns:
+        Optional[List[Dict]]: Список свечей или None в случае ошибки
+    """
+    url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.MarketDataService/GetCandles"
+    
+    body = {
+        "figi": figi,
+        "from": from_date,
+        "to": to_date,
+        "interval": interval
+    }
+    
+    session = get_session()
+    
+    try:
+        logger.info(f"Запрос свечей для {figi} с {from_date} по {to_date}, интервал: {interval}")
+        
+        response = session.post(
+            url,
+            json=body,
+            timeout=15,
+            verify=SSL_VERIFY
+        )
+        
+        response.raise_for_status()
+        result = response.json()
+        
+        candles = result.get("candles", [])
+        
+        if not candles:
+            logger.warning(f"API не вернул свечи для {figi}")
+            return []
+        
+        logger.info(f"Успешно получено {len(candles)} свечей для {figi}")
+        return candles
+    
+    except requests.exceptions.RequestException as err:
+        logger.error(f"Ошибка при запросе свечей: {err}")
+        return None
+
+
+def get_portfolio_history(
+    account_id: str,
+    from_date: str,
+    to_date: str
+) -> Optional[List[Dict]]:
+    """
+    Рассчитывает историю стоимости портфеля на основе исторических данных акций.
+    
+    Поскольку T-Invest API не предоставляет прямой метод для получения истории портфеля,
+    эта функция рассчитывает стоимость на основе текущих позиций и исторических цен.
+    
+    Args:
+        account_id: Идентификатор счёта
+        from_date: Начальная дата в формате ISO 8601
+        to_date: Конечная дата в формате ISO 8601
+    
+    Returns:
+        Optional[List[Dict]]: Список значений портфеля с полями 'timestamp' и 'value'
+    """
+    try:
+        # Получаем текущие позиции портфеля
+        positions, portfolio, _ = get_portfolio_positions(account_id, use_cache=False)
+        
+        if not positions:
+            logger.warning("Невозможно рассчитать историю портфеля - нет позиций")
+            return []
+        
+        # Получаем текущий баланс
+        current_balance = 0.0
+        if portfolio:
+            total_amount = portfolio.get("totalAmountCurrencies", {})
+            if total_amount:
+                current_balance = format_quotation(total_amount)
+        
+        # Определяем интервал на основе разницы дат
+        from datetime import datetime
+        start = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+        end = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+        diff_days = (end - start).days
+        
+        if diff_days <= 1:
+            interval = "CANDLE_INTERVAL_HOUR"
+        elif diff_days <= 7:
+            interval = "CANDLE_INTERVAL_HOUR"
+        elif diff_days <= 30:
+            interval = "CANDLE_INTERVAL_DAY"
+        else:
+            interval = "CANDLE_INTERVAL_DAY"
+        
+        # Словарь для хранения исторических данных по каждой позиции
+        position_histories = {}
+        
+        for position in positions:
+            figi = position.get("figi")
+            quantity = format_quotation(position.get("quantity", {}))
+            
+            if not figi or quantity == 0:
+                continue
+            
+            # Получаем исторические свечи для акции
+            candles = get_candles(figi, from_date, to_date, interval)
+            
+            if candles:
+                position_histories[figi] = {
+                    'quantity': quantity,
+                    'candles': candles
+                }
+        
+        if not position_histories:
+            logger.warning("Не удалось получить исторические данные для позиций")
+            return []
+        
+        # Создаем словарь timestamp -> total_value
+        value_by_time = {}
+        
+        # Для каждой временной точки рассчитываем общую стоимость портфеля
+        for figi, hist_data in position_histories.items():
+            quantity = hist_data['quantity']
+            candles = hist_data['candles']
+            
+            for candle in candles:
+                timestamp = candle.get('time')
+                if not timestamp:
+                    continue
+                
+                # Используем цену закрытия свечи
+                close_price = format_quotation(candle.get('close', {}))
+                
+                if timestamp not in value_by_time:
+                    value_by_time[timestamp] = current_balance
+                
+                value_by_time[timestamp] += quantity * close_price
+        
+        # Преобразуем в список отсортированных значений
+        from datetime import datetime
+        history = []
+        for timestamp_str, value in sorted(value_by_time.items()):
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                history.append({
+                    'timestamp': timestamp,
+                    'value': value
+                })
+            except Exception as e:
+                logger.warning(f"Не удалось преобразовать timestamp {timestamp_str}: {e}")
+                continue
+        
+        logger.info(f"Рассчитана история портфеля: {len(history)} точек")
+        return history
+    
+    except Exception as e:
+        logger.error(f"Ошибка при расчёте истории портфеля: {e}", exc_info=True)
+        return None
+
+
+def format_quotation(quotation: Dict) -> float:
+    """
+    Форматирует объект Quotation в число.
+    
+    Args:
+        quotation: Объект с полями units и nano
+    
+    Returns:
+        float: Значение в виде числа
+    """
+    if not quotation:
+        return 0.0
+    
+    # Получаем units и nano
+    units = quotation.get("units", 0)
+    nano = quotation.get("nano", 0)
+    
+    # Преобразуем в числа, если пришли строки
+    try:
+        units = int(units) if units else 0
+    except (ValueError, TypeError):
+        units = 0
+    
+    try:
+        nano = int(nano) if nano else 0
+    except (ValueError, TypeError):
+        nano = 0
+    
+    # Преобразуем nano (наносекунды) в дробную часть
+    value = units + (nano / 1_000_000_000)
+    
+    return value

@@ -52,6 +52,9 @@ def _find_trend_segments(timestamps: List[datetime], values: List[float]) -> Lis
     Returns:
         List[Tuple[int, int]]: Список сегментов в виде (начало, конец)
     """
+    if len(values) < 2:
+        return []
+    
     if len(values) < 3:
         return [(0, len(values) - 1)]
     
@@ -70,7 +73,9 @@ def _find_trend_segments(timestamps: List[datetime], values: List[float]) -> Lis
         
         # Линейная регрессия для определения направления
         if len(local_values) >= 2:
-            avg_change = (local_values[-1] - local_values[0]) / len(local_values)
+            # Защита от деления на ноль
+            value_diff = local_values[-1] - local_values[0]
+            avg_change = value_diff / len(local_values) if len(local_values) > 0 else 0
             new_trend = 'up' if avg_change > 0 else 'down'
             
             # Если тренд изменился, создаем новый сегмент
@@ -81,7 +86,8 @@ def _find_trend_segments(timestamps: List[datetime], values: List[float]) -> Lis
             current_trend = new_trend
     
     # Добавляем последний сегмент
-    segments.append((start_idx, len(values) - 1))
+    if start_idx < len(values):
+        segments.append((start_idx, len(values) - 1))
     
     # Если сегментов получилось слишком много, объединяем короткие
     if len(segments) > 5:
@@ -131,7 +137,8 @@ def generate_balance_chart(
         
         # Рисуем линии тренда для каждого сегмента
         for start_idx, end_idx in segments:
-            if end_idx - start_idx < 1:
+            # Пропускаем сегменты с одной точкой или недостаточными данными
+            if end_idx <= start_idx:
                 continue
             
             segment_times = timestamps[start_idx:end_idx+1]
@@ -264,7 +271,8 @@ def generate_stock_chart(
         
         # Рисуем линии тренда для каждого сегмента
         for start_idx, end_idx in segments:
-            if end_idx - start_idx < 1:
+            # Пропускаем сегменты с одной точкой или недостаточными данными
+            if end_idx <= start_idx:
                 continue
             
             segment_times = timestamps[start_idx:end_idx+1]

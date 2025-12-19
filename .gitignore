@@ -24,6 +24,7 @@ logs/
 *.swo
 *~
 .DS_Store
+.idea
 
 # Кэш
 .cache/

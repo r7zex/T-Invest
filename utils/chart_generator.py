@@ -200,10 +200,9 @@ def generate_balance_chart(
         # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
         pl_color = '#10b981' if profit_loss >= 0 else '#ef4444'
         pl_sign = '+' if profit_loss >= 0 else ''
-        pl_symbol = '^' if profit_loss >= 0 else 'v'  # Стрелка вверх или вниз
 
         # Форматируем изменение с правильной точностью
-        pl_label = f'{pl_symbol} Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
+        pl_label = f'Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
 
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pl_color, linewidth=3, label=pl_label)
@@ -341,10 +340,9 @@ def generate_stock_chart(
         # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
         pc_color = '#10b981' if price_change >= 0 else '#ef4444'
         pc_sign = '+' if price_change >= 0 else ''
-        pc_symbol = '^' if price_change >= 0 else 'v'  # Стрелка вверх или вниз
 
         # Форматируем изменение с правильной точностью
-        pc_label = f'{pc_symbol} Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
+        pc_label = f'Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
 
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pc_color, linewidth=3, label=pc_label)

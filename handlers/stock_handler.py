@@ -120,7 +120,7 @@ def create_portfolio_keyboard(
     buttons = []
     for position in positions:
         try:
-            # Получаем тикер и количество
+            # Получаем тикер
             ticker = position.get("ticker", "N/A")
             figi = position.get("figi", ticker)
             quantity = format_quotation(position.get("quantity", {}))
@@ -131,34 +131,31 @@ def create_portfolio_keyboard(
             if current_price == 0:
                 current_price = format_quotation(position.get("currentPrice", {}))
 
-            # Создаём текст кнопки с тикером, количеством и ростом
+            # Создаём текст кнопки с тикером и ростом (БЕЗ количества)
             prefix = "🎁 " if is_virtual else ""
-
-            # ИСПРАВЛЕНИЕ: Правильное форматирование количества для подарочных акций
-            qty_str = format_quantity_display(quantity, is_virtual)
 
             # Рассчитываем рост/падение
             if current_price > 0:
                 absolute_growth, relative_growth = calculate_position_growth(position, current_price)
 
-                # Форматируем знак и эмодзи (используем цветные эмодзи вместо цветного текста)
+                # Форматируем знак и эмодзи
                 if absolute_growth >= 0:
-                    emoji = "🟢"  # Зелёный круг для прибыли
+                    emoji = "🟢"
                     sign = "+"
                 else:
-                    emoji = "🔴"  # Красный круг для убытка
+                    emoji = "🔴"
                     sign = ""
 
                 currency = position.get("currency", "RUB")
                 currency_symbol = "₽" if currency == "RUB" else currency
 
                 button_text = (
-                    f"{emoji} {prefix}{ticker} ({qty_str}) "
+                    f"{emoji} {prefix}{ticker} "
                     f"{sign}{relative_growth:.1f}% "
                     f"{sign}{absolute_growth:.0f}{currency_symbol}"
                 )
             else:
-                button_text = f"{prefix}{ticker} ({qty_str} шт.)"
+                button_text = f"{prefix}{ticker}"
 
             button = telebot.types.InlineKeyboardButton(
                 text=button_text,
@@ -521,7 +518,7 @@ def stock_handler(call, bot):
             bot.send_photo(
                 call.message.chat.id,
                 chart_bytes,
-                caption=f"📈 Динамика баланса за период: {period}",
+                caption=f"📈 Динамика баланса за период: {dict(map(lambda x: x[::-1], periods))[period]}",
                 reply_markup=markup
             )
         else:
@@ -560,7 +557,7 @@ def stock_handler(call, bot):
         # Получаем информацию об акции
         share_info = get_share_info(figi)
         ticker = share_info.get("ticker", "N/A") if share_info else "N/A"
-        stock_name = share_info.get("name", ticker) if share_info else ticker  # Используем название!
+        stock_name = share_info.get("name", ticker) if share_info else ticker
         currency = share_info.get("currency", "RUB") if share_info else "RUB"
 
         # Определяем временной интервал
@@ -599,7 +596,7 @@ def stock_handler(call, bot):
                         continue
 
             if history:
-                # Генерируем график с НАЗВАНИЕМ акции
+                # Генерируем график
                 chart_bytes = generate_stock_chart(figi, history, period, stock_name, currency)
 
                 # Создаём клавиатуру с выбором периода
@@ -637,7 +634,7 @@ def stock_handler(call, bot):
                 bot.send_photo(
                     call.message.chat.id,
                     chart_bytes,
-                    caption=f"📈 Динамика цены {stock_name} за период: {period}",
+                    caption=f"📈 Динамика цены {stock_name} за период: {dict(map(lambda x: x[::-1], periods))[period]}",
                     reply_markup=markup
                 )
             else:

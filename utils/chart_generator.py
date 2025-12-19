@@ -200,10 +200,9 @@ def generate_balance_chart(
         # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
         pl_color = '#10b981' if profit_loss >= 0 else '#ef4444'
         pl_sign = '+' if profit_loss >= 0 else ''
-        pl_symbol = '^' if profit_loss >= 0 else 'v'  # Стрелка вверх или вниз
 
         # Форматируем изменение с правильной точностью
-        pl_label = f'{pl_symbol} Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
+        pl_label = f'Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
 
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pl_color, linewidth=3, label=pl_label)
@@ -220,22 +219,27 @@ def generate_balance_chart(
 
         ax.set_ylim(bottom=min_value - value_range * 0.2, top=max_value + value_range * 0.2)
 
-        # Форматирование оси X в зависимости от периода
+        # Форматирование оси X в зависимости от периода (упрощённые интервалы)
         if period == '1h':
+            # 1 час - каждые 10 минут
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
+            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=10))
         elif period == '1d':
+            # 1 день - каждые 4 часа
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=4))
         elif period == '1w':
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
-            ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
-        elif period == '1m':
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
-            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[3, 7, 11, 15, 19, 23]))
-        elif period == '1y':
+            # 1 неделя - каждый день
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
-            ax.xaxis.set_major_locator(mdates.DayLocator())
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        elif period == '1m':
+            # 1 месяц - каждые 3 дня
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+        elif period == '1y':
+            # 1 год - каждые 2 недели (примерно 14 дней)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
 
         plt.xticks(rotation=45, ha='right')
 
@@ -336,10 +340,9 @@ def generate_stock_chart(
         # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
         pc_color = '#10b981' if price_change >= 0 else '#ef4444'
         pc_sign = '+' if price_change >= 0 else ''
-        pc_symbol = '^' if price_change >= 0 else 'v'  # Стрелка вверх или вниз
 
         # Форматируем изменение с правильной точностью
-        pc_label = f'{pc_symbol} Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
+        pc_label = f'Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
 
         # Добавляем информацию о прибыли/убытке в легенду
         ax.plot([], [], color=pc_color, linewidth=3, label=pc_label)
@@ -356,22 +359,27 @@ def generate_stock_chart(
 
         ax.set_ylim(bottom=min_price - price_range * 0.2, top=max_price + price_range * 0.2)
 
-        # Форматирование оси X в зависимости от периода
+        # Форматирование оси X в зависимости от периода (упрощённые интервалы)
         if period == '1h':
+            # 1 час - каждые 10 минут
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
+            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=10))
         elif period == '1d':
+            # 1 день - каждые 4 часа
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
+            ax.xaxis.set_major_locator(mdates.HourLocator(interval=4))
         elif period == '1w':
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
-            ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
-        elif period == '1m':
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
-            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[3, 7, 11, 15, 19, 23]))
-        elif period == '1y':
+            # 1 неделя - каждый день
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
-            ax.xaxis.set_major_locator(mdates.DayLocator())
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        elif period == '1m':
+            # 1 месяц - каждые 3 дня
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
+        elif period == '1y':
+            # 1 год - каждые 2 недели (примерно 14 дней)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m'))
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
 
         plt.xticks(rotation=45, ha='right')
 

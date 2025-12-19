@@ -3,7 +3,7 @@ import os
 import logging
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 # Получаем ключ API для T-Invest
 T_INVEST_API_KEY = os.getenv("T_INVEST_API_KEY")
 
-# Правильный URL для prod (обновлённый после ребрендинга)
+# Правильный URL для prod (проверен на декабрь 2025)
 BASE_URL = "https://invest-public-api.tbank.ru/rest"
 
-TEMP_URL = "https://sandbox-invest-public-api.tbank.ru"
+# URL песочницы
+SANDBOX_URL = "https://sandbox-invest-public-api.tbank.ru/rest"
 
 # ⚠️ ОТКЛЮЧАЕМ ПРОВЕРКУ SSL (только для тестирования!)
 SSL_VERIFY = False
@@ -49,7 +50,7 @@ def get_session() -> requests.Session:
     Получает или создаёт глобальную сессию для HTTP-запросов.
     Переиспользование сессии значительно ускоряет запросы.
     Thread-safe реализация.
-    
+
     Returns:
         requests.Session: Настроенная сессия
     """
@@ -89,7 +90,7 @@ def get_accounts() -> List[Dict]:
     session = get_session()
 
     try:
-        logger.info("🔍 Запрос списка счетов пользователя")
+        logger.info("Запрос списка счетов пользователя")
 
         response = session.post(
             url,
@@ -98,34 +99,20 @@ def get_accounts() -> List[Dict]:
             verify=SSL_VERIFY
         )
 
-        logger.info(f"📡 Статус ответа API: {response.status_code}")
-
         response.raise_for_status()
         result = response.json()
 
         accounts = result.get("accounts", [])
 
         if not accounts:
-            logger.warning("⚠️ У пользователя нет доступных счетов")
-            logger.info(f"📄 Полный ответ API: {result}")
+            logger.warning("У пользователя нет доступных счетов")
             return []
 
-        logger.info(f"✅ Получено {len(accounts)} счетов")
-        for idx, acc in enumerate(accounts):
-            logger.info(f"  📋 Счёт {idx + 1}: ID={acc.get('id')}, Type={acc.get('type')}")
-
+        logger.info(f"Получено {len(accounts)} счетов")
         return accounts
 
-    except requests.exceptions.HTTPError as err:
-        logger.error(f"❌ HTTP ошибка при запросе счетов: {err}")
-        logger.error(f"   Статус: {err.response.status_code}")
-        try:
-            logger.error(f"   Ответ: {err.response.json()}")
-        except:
-            logger.error(f"   Ответ: {err.response.text}")
-        return []
     except requests.exceptions.RequestException as err:
-        logger.error(f"❌ Ошибка при запросе списка счетов: {err}")
+        logger.error(f"Ошибка при запросе списка счетов: {err}")
         return []
 
 
@@ -150,7 +137,7 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
     session = get_session()
 
     try:
-        logger.info(f"🔍 Запрос портфеля для счёта {account_id}")
+        logger.info(f"Запрос портфеля для счёта {account_id}")
 
         response = session.post(
             url,
@@ -159,36 +146,21 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
             verify=SSL_VERIFY
         )
 
-        logger.info(f"📡 Статус ответа API: {response.status_code}")
-
         response.raise_for_status()
         result = response.json()
 
         positions = result.get("positions", [])
-        virtual_positions = result.get("virtualPositions", [])
-
-        logger.info(f"✅ В портфеле {len(positions)} обычных позиций")
-        logger.info(f"🎁 В портфеле {len(virtual_positions)} подарочных позиций")
-
-        # Логируем ключи в ответе для отладки
-        logger.info(f"📋 Ключи в ответе портфеля: {list(result.keys())}")
+        logger.info(f"В портфеле {len(positions)} позиций")
 
         return result
 
-    except requests.exceptions.HTTPError as err:
-        logger.error(f"❌ HTTP ошибка при запросе портфеля: {err}")
-        logger.error(f"   Статус: {err.response.status_code}")
-        try:
-            logger.error(f"   Ответ: {err.response.json()}")
-        except:
-            logger.error(f"   Ответ: {err.response.text}")
-        return None
     except requests.exceptions.RequestException as err:
-        logger.error(f"❌ Ошибка при запросе портфеля: {err}")
+        logger.error(f"Ошибка при запросе портфеля: {err}")
         return None
 
 
-def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> Tuple[List[Dict], Optional[Dict], Optional[str]]:
+def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> Tuple[
+    List[Dict], Optional[Dict], Optional[str]]:
     """
     Получает список позиций в портфеле пользователя с кэшированием.
     Если account_id не указан, берётся первый доступный счёт.
@@ -204,7 +176,7 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
             - Список позиций (акций) в портфеле, включая подарочные
             - Исходный объект портфеля
             - Идентификатор используемого счёта
-    
+
     Note:
         Кэшированные данные используются для уменьшения нагрузки на API
         и ускорения повторных запросов в течение TTL.
@@ -213,15 +185,15 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
     if not account_id:
         accounts = get_accounts()
         if not accounts:
-            logger.error("❌ Не удалось получить список счетов")
+            logger.error("Не удалось получить список счетов")
             return [], None, None
         account_id = accounts[0].get("id")
-        logger.info(f"✅ Используется счёт: {account_id}")
+        logger.info(f"Используется счёт: {account_id}")
 
     # Проверяем кэш (thread-safe)
     cache_key = f"portfolio_{account_id}"
     now = time.time()
-    
+
     if use_cache:
         with _cache_lock:
             if cache_key in _cache:
@@ -233,25 +205,11 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
     # Получаем портфель
     portfolio = get_portfolio(account_id)
     if not portfolio:
-        logger.error(f"❌ Не удалось получить портфель для счёта {account_id}")
         return [], None, account_id
-
-    logger.info(f"📊 Получен портфель. Ключи в ответе: {list(portfolio.keys())}")
 
     # Извлекаем только позиции с типом "share" (акции)
     positions = portfolio.get("positions", [])
     virtual_positions = portfolio.get("virtualPositions", [])
-
-    logger.info(f"📦 Обычных позиций: {len(positions)}")
-    logger.info(f"🎁 Подарочных позиций: {len(virtual_positions)}")
-
-    # Подсчитываем типы инструментов
-    if positions:
-        types = {}
-        for pos in positions:
-            inst_type = pos.get("instrumentType", "unknown")
-            types[inst_type] = types.get(inst_type, 0) + 1
-        logger.info(f"📋 Типы обычных инструментов: {types}")
 
     shares = [pos for pos in positions if pos.get("instrumentType") == "share"]
     virtual_shares = []
@@ -265,18 +223,17 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
     all_shares = shares + virtual_shares
 
     logger.info(
-        f"✅ Найдено {len(all_shares)} акций в портфеле "
-        f"(обычных: {len(shares)}, подарочных: {len(virtual_shares)})"
+        f"Найдено {len(all_shares)} акций в портфеле (вкл. подарочные: {len(virtual_shares)})"
     )
-    
+
     result = (all_shares, portfolio, account_id)
-    
+
     # Сохраняем в кэш (thread-safe)
     if use_cache:
         with _cache_lock:
             _cache[cache_key] = (result, now)
             logger.info("Данные портфеля сохранены в кэш")
-    
+
     return result
 
 
@@ -297,7 +254,7 @@ def get_withdraw_limits(account_id: str) -> Optional[Dict]:
     session = get_session()
 
     try:
-        logger.info(f"🔍 Запрос лимитов на вывод для счёта {account_id}")
+        logger.info(f"Запрос лимитов на вывод для счёта {account_id}")
 
         response = session.post(
             url,
@@ -306,36 +263,18 @@ def get_withdraw_limits(account_id: str) -> Optional[Dict]:
             verify=SSL_VERIFY
         )
 
-        logger.info(f"📡 Статус ответа API: {response.status_code}")
-
         response.raise_for_status()
         result = response.json()
 
         if not result:
-            logger.warning("⚠️ API вернул пустые лимиты на вывод")
+            logger.warning("API вернул пустые лимиты на вывод")
             return None
 
-        logger.info("✅ Успешно получены лимиты на вывод")
-        logger.info(f"📋 Ключи в ответе лимитов: {list(result.keys())}")
-
-        # Логируем доступные средства
-        money = result.get("money", [])
-        blocked = result.get("blocked", [])
-        logger.info(f"💰 Доступно валют: {len(money)}")
-        logger.info(f"🔒 Заблокировано валют: {len(blocked)}")
-
+        logger.info("Успешно получены лимиты на вывод")
         return result
 
-    except requests.exceptions.HTTPError as err:
-        logger.error(f"❌ HTTP ошибка при запросе лимитов: {err}")
-        logger.error(f"   Статус: {err.response.status_code}")
-        try:
-            logger.error(f"   Ответ: {err.response.json()}")
-        except:
-            logger.error(f"   Ответ: {err.response.text}")
-        return None
     except requests.exceptions.RequestException as err:
-        logger.error(f"❌ Ошибка при запросе лимитов на вывод: {err}")
+        logger.error(f"Ошибка при запросе лимитов на вывод: {err}")
         return None
 
 
@@ -479,14 +418,14 @@ def get_last_prices(figis: List[str]) -> Optional[Dict]:
 
 
 def get_candles(
-    figi: str,
-    from_date: str,
-    to_date: str,
-    interval: str = "CANDLE_INTERVAL_DAY"
+        figi: str,
+        from_date: str,
+        to_date: str,
+        interval: str = "CANDLE_INTERVAL_DAY"
 ) -> Optional[List[Dict]]:
     """
     Получает исторические свечи для инструмента.
-    
+
     Args:
         figi: Идентификатор финансового инструмента
         from_date: Начальная дата в формате ISO 8601 (например, '2024-01-01T00:00:00Z')
@@ -499,87 +438,87 @@ def get_candles(
             - CANDLE_INTERVAL_DAY: 1 день (по умолчанию)
             - CANDLE_INTERVAL_WEEK: 1 неделя
             - CANDLE_INTERVAL_MONTH: 1 месяц
-    
+
     Returns:
         Optional[List[Dict]]: Список свечей или None в случае ошибки
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.MarketDataService/GetCandles"
-    
+
     body = {
         "figi": figi,
         "from": from_date,
         "to": to_date,
         "interval": interval
     }
-    
+
     session = get_session()
-    
+
     try:
         logger.info(f"Запрос свечей для {figi} с {from_date} по {to_date}, интервал: {interval}")
-        
+
         response = session.post(
             url,
             json=body,
             timeout=15,
             verify=SSL_VERIFY
         )
-        
+
         response.raise_for_status()
         result = response.json()
-        
+
         candles = result.get("candles", [])
-        
+
         if not candles:
             logger.warning(f"API не вернул свечи для {figi}")
             return []
-        
+
         logger.info(f"Успешно получено {len(candles)} свечей для {figi}")
         return candles
-    
+
     except requests.exceptions.RequestException as err:
         logger.error(f"Ошибка при запросе свечей: {err}")
         return None
 
 
 def get_portfolio_history(
-    account_id: str,
-    from_date: str,
-    to_date: str
+        account_id: str,
+        from_date: str,
+        to_date: str
 ) -> Optional[List[Dict]]:
     """
     Рассчитывает историю стоимости портфеля на основе исторических данных акций.
-    
+
     Поскольку T-Invest API не предоставляет прямой метод для получения истории портфеля,
     эта функция рассчитывает стоимость на основе текущих позиций и исторических цен.
-    
+
     Args:
         account_id: Идентификатор счёта
         from_date: Начальная дата в формате ISO 8601
         to_date: Конечная дата в формате ISO 8601
-    
+
     Returns:
         Optional[List[Dict]]: Список значений портфеля с полями 'timestamp' и 'value'
     """
     try:
         # Получаем текущие позиции портфеля
         positions, portfolio, _ = get_portfolio_positions(account_id, use_cache=False)
-        
+
         if not positions:
             logger.warning("Невозможно рассчитать историю портфеля - нет позиций")
             return []
-        
+
         # Получаем текущий баланс
         current_balance = 0.0
         if portfolio:
             total_amount = portfolio.get("totalAmountCurrencies", {})
             if total_amount:
                 current_balance = format_quotation(total_amount)
-        
+
         # Определяем интервал на основе разницы дат
         start = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
         end = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
         diff_days = (end - start).days
-        
+
         if diff_days <= 1:
             interval = "CANDLE_INTERVAL_HOUR"
         elif diff_days <= 7:
@@ -588,51 +527,51 @@ def get_portfolio_history(
             interval = "CANDLE_INTERVAL_DAY"
         else:
             interval = "CANDLE_INTERVAL_DAY"
-        
+
         # Словарь для хранения исторических данных по каждой позиции
         position_histories = {}
-        
+
         for position in positions:
             figi = position.get("figi")
             quantity = format_quotation(position.get("quantity", {}))
-            
+
             if not figi or quantity == 0:
                 continue
-            
+
             # Получаем исторические свечи для акции
             candles = get_candles(figi, from_date, to_date, interval)
-            
+
             if candles:
                 position_histories[figi] = {
                     'quantity': quantity,
                     'candles': candles
                 }
-        
+
         if not position_histories:
             logger.warning("Не удалось получить исторические данные для позиций")
             return []
-        
+
         # Создаем словарь timestamp -> total_value
         value_by_time = {}
-        
+
         # Для каждой временной точки рассчитываем общую стоимость портфеля
         for figi, hist_data in position_histories.items():
             quantity = hist_data['quantity']
             candles = hist_data['candles']
-            
+
             for candle in candles:
                 timestamp = candle.get('time')
                 if not timestamp:
                     continue
-                
+
                 # Используем цену закрытия свечи
                 close_price = format_quotation(candle.get('close', {}))
-                
+
                 if timestamp not in value_by_time:
                     value_by_time[timestamp] = current_balance
-                
+
                 value_by_time[timestamp] += quantity * close_price
-        
+
         # Преобразуем в список отсортированных значений
         history = []
         for timestamp_str, value in sorted(value_by_time.items()):
@@ -645,44 +584,79 @@ def get_portfolio_history(
             except Exception as e:
                 logger.warning(f"Не удалось преобразовать timestamp {timestamp_str}: {e}")
                 continue
-        
+
         logger.info(f"Рассчитана история портфеля: {len(history)} точек")
         return history
-    
+
     except Exception as e:
         logger.error(f"Ошибка при расчёте истории портфеля: {e}", exc_info=True)
+        return None
+
+
+def get_portfolio_value_yesterday(account_id: str) -> Optional[float]:
+    """
+    Получает стоимость портфеля на вчерашний день (для расчёта изменения за сегодня).
+
+    Args:
+        account_id: Идентификатор счёта
+
+    Returns:
+        Optional[float]: Стоимость портфеля на вчерашний день или None
+    """
+    try:
+        # Определяем временной диапазон (вчера)
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday = today - timedelta(days=1)
+
+        from_date = yesterday.isoformat() + "Z"
+        to_date = today.isoformat() + "Z"
+
+        # Получаем историю портфеля
+        history = get_portfolio_history(account_id, from_date, to_date)
+
+        if history and len(history) > 0:
+            # Берём последнее значение (самое близкое к концу вчерашнего дня)
+            yesterday_value = history[-1]['value']
+            logger.info(f"Стоимость портфеля на вчера: {yesterday_value}")
+            return yesterday_value
+        else:
+            logger.warning("Не удалось получить стоимость портфеля на вчера")
+            return None
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении стоимости портфеля на вчера: {e}", exc_info=True)
         return None
 
 
 def format_quotation(quotation: Dict) -> float:
     """
     Форматирует объект Quotation в число.
-    
+
     Args:
         quotation: Объект с полями units и nano
-    
+
     Returns:
         float: Значение в виде числа
     """
     if not quotation:
         return 0.0
-    
+
     # Получаем units и nano
     units = quotation.get("units", 0)
     nano = quotation.get("nano", 0)
-    
+
     # Преобразуем в числа, если пришли строки
     try:
         units = int(units) if units else 0
     except (ValueError, TypeError):
         units = 0
-    
+
     try:
         nano = int(nano) if nano else 0
     except (ValueError, TypeError):
         nano = 0
-    
+
     # Преобразуем nano (дробная часть в единицах 10^-9) в дробную часть
     value = units + (nano / 1_000_000_000)
-    
+
     return value

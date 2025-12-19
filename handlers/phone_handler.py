@@ -46,6 +46,7 @@ def normalize_phone_number(phone_number: str) -> str:
 def phone_handler(message, bot):
     """
     Проверяет номер телефона и авторизует пользователя.
+    После успешной авторизации сразу показывает портфель.
 
     Args:
         message: Сообщение от Telegram с контактом
@@ -83,18 +84,38 @@ def phone_handler(message, bot):
     if normalized_user_phone == normalized_allowed_phone:
         logger.info(f"Пользователь {user_id} успешно авторизован ✅")
 
-        # Создаём ReplyKeyboard с кнопкой "Меню"
-        reply_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-        menu_button = telebot.types.KeyboardButton("📊 Меню")
-        reply_markup.add(menu_button)
-
+        # Удаляем клавиатуру с кнопкой "Поделиться контактами"
         bot.send_message(
             message.chat.id,
             "✅ Доступ разрешен!\n\n"
-            "Отлично, теперь вы можете использовать все возможности бота! 🎉\n\n"
-            "Используйте кнопку '📊 Меню' для доступа к функциям бота.",
-            reply_markup=reply_markup
+            "Отлично, теперь вы можете использовать все возможности бота! 🎉",
+            reply_markup=telebot.types.ReplyKeyboardRemove()
         )
+
+        # ВАЖНО: Сразу показываем портфель после авторизации
+        # Импортируем функцию обработки портфеля
+        from handlers.stock_handler import handle_stock_callback
+
+        # Создаём фейковый callback для отображения портфеля
+        class FakeCall:
+            def __init__(self, chat_id, user_id):
+                self.message = type('obj', (object,),
+                                    {'chat': type('obj', (object,), {'id': chat_id})(), 'message_id': None})()
+                self.from_user = type('obj', (object,), {'id': user_id})()
+                self.data = "view_stocks"
+                self.id = "auth_callback"
+
+        fake_call = FakeCall(message.chat.id, user_id)
+
+        # Вызываем обработчик портфеля
+        try:
+            handle_stock_callback(fake_call, bot)
+        except Exception as e:
+            logger.error(f"Ошибка при открытии портфеля после авторизации: {e}")
+            bot.send_message(
+                message.chat.id,
+                "Добро пожаловать! Используйте команду /start для начала работы."
+            )
     else:
         logger.warning(
             f"Пользователь {user_id} не прошёл авторизацию ❌. "

@@ -53,20 +53,28 @@ def get_price_precision(price: float) -> int:
     Returns:
         int: Количество знаков после запятой
     """
-    if price < 1:
-        # Для цен < 1 рубля - до первых трёх ненулевых цифр после запятой
-        price_str = f"{price:.10f}"
+    abs_price = abs(price)
+
+    if abs_price < 1:
+        # Для цен < 1 рубля - показываем до первых 3 значащих цифр
+        if abs_price == 0:
+            return 2
+        # Считаем количество нулей после запятой
+        price_str = f"{abs_price:.10f}"
         after_dot = price_str.split('.')[1] if '.' in price_str else ""
-        non_zero_count = 0
-        for char in after_dot:
+
+        # Находим первую ненулевую цифру
+        first_nonzero_pos = 0
+        for i, char in enumerate(after_dot):
             if char != '0':
-                non_zero_count += 1
-            if non_zero_count >= 3:
-                return len(after_dot[:after_dot.index(char) + 1])
-        return 10  # Максимум 10 знаков
-    elif price >= 1 and price < 10:
+                first_nonzero_pos = i
+                break
+
+        # Возвращаем позицию + 3 значащих цифры, но не более 6
+        return min(first_nonzero_pos + 3, 6)
+    elif abs_price < 10:
         return 3
-    elif price >= 10 and price < 1000:
+    elif abs_price < 1000:
         return 2
     else:  # >= 1000
         return 1
@@ -92,7 +100,7 @@ def format_price_with_precision(value: float, currency: str = "RUB") -> str:
         "eur": "€"
     }
     symbol = currency_symbols.get(currency, currency)
-    precision = get_price_precision(abs(value))
+    precision = get_price_precision(value)
 
     # Форматируем с нужной точностью
     formatted = f"{value:.{precision}f}"
@@ -197,14 +205,15 @@ def generate_balance_chart(
         profit_loss = end_value - start_value
         profit_loss_percent = (profit_loss / start_value * 100) if start_value != 0 else 0
 
-        # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
-        pl_color = '#10b981' if profit_loss >= 0 else '#ef4444'
+        # ИСПРАВЛЕНО: Цвет линии изменения совпадает с трендом
+        pl_color = trend_color
         pl_sign = '+' if profit_loss >= 0 else ''
+        pl_symbol = '^' if profit_loss >= 0 else 'v'
 
         # Форматируем изменение с правильной точностью
-        pl_label = f'Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
+        pl_label = f'{pl_symbol} Изменение: {pl_sign}{format_price_with_precision(profit_loss, currency)} ({pl_sign}{profit_loss_percent:.2f}%)'
 
-        # Добавляем информацию о прибыли/убытке в легенду
+        # Добавляем информацию о прибыли/убытке в легенду с правильным цветом
         ax.plot([], [], color=pl_color, linewidth=3, label=pl_label)
 
         # Настройка осей
@@ -212,7 +221,7 @@ def generate_balance_chart(
         ax.set_ylabel('Баланс', fontsize=12, fontweight='bold')
         ax.set_title('Динамика баланса портфеля', fontsize=14, fontweight='bold', pad=20)
 
-        # ИСПРАВЛЕНИЕ: Устанавливаем ylim с отступами сверху и снизу
+        # Устанавливаем ylim с отступами сверху и снизу
         max_value = max(values)
         min_value = min(values)
         value_range = max_value - min_value
@@ -337,14 +346,15 @@ def generate_stock_chart(
         price_change = end_price - start_price
         price_change_percent = (price_change / start_price * 100) if start_price != 0 else 0
 
-        # Определяем цвет и символ для легенды (используем текст вместо эмодзи)
-        pc_color = '#10b981' if price_change >= 0 else '#ef4444'
+        # ИСПРАВЛЕНО: Цвет линии изменения совпадает с трендом
+        pc_color = trend_color
         pc_sign = '+' if price_change >= 0 else ''
+        pc_symbol = '^' if price_change >= 0 else 'v'
 
         # Форматируем изменение с правильной точностью
-        pc_label = f'Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
+        pc_label = f'{pc_symbol} Изменение: {pc_sign}{format_price_with_precision(price_change, currency)} ({pc_sign}{price_change_percent:.2f}%)'
 
-        # Добавляем информацию о прибыли/убытке в легенду
+        # Добавляем информацию о прибыли/убытке в легенду с правильным цветом
         ax.plot([], [], color=pc_color, linewidth=3, label=pc_label)
 
         # Настройка осей
@@ -352,7 +362,7 @@ def generate_stock_chart(
         ax.set_ylabel('Цена', fontsize=12, fontweight='bold')
         ax.set_title(f'Динамика цены акции {stock_name}', fontsize=14, fontweight='bold', pad=20)
 
-        # ИСПРАВЛЕНИЕ: Устанавливаем ylim с отступами сверху и снизу
+        # Устанавливаем ylim с отступами сверху и снизу
         max_price = max(prices)
         min_price = min(prices)
         price_range = max_price - min_price

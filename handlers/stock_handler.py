@@ -469,17 +469,18 @@ def stock_handler(call, bot):
         except Exception as e:
             logger.warning(f"Не удалось удалить сообщение: {e}")
 
-        # Определяем временной интервал
+        # Определяем временной интервал (ИСПРАВЛЕНО: используем текущее время минус период)
         now = datetime.utcnow()
         period_map = {
-            "1h": (now - timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
-            "1d": (now - timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
-            "1w": (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
-            "1m": (now - timedelta(days=30), "CANDLE_INTERVAL_DAY"),
-            "1y": (now - timedelta(days=365), "CANDLE_INTERVAL_DAY")
+            "1h": (timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
+            "1d": (timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
+            "1w": (timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
+            "1m": (timedelta(days=30), "CANDLE_INTERVAL_DAY"),
+            "1y": (timedelta(days=365), "CANDLE_INTERVAL_DAY")
         }
 
-        from_date, interval = period_map.get(period, (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        period_delta, interval = period_map.get(period, (timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        from_date = now - period_delta
         from_date_str = from_date.isoformat() + "Z"
         to_date_str = now.isoformat() + "Z"
 
@@ -518,7 +519,7 @@ def stock_handler(call, bot):
             bot.send_photo(
                 call.message.chat.id,
                 chart_bytes,
-                caption=f"📈 Динамика баланса за период: {dict(map(lambda x: x[::-1], periods))[period]}",
+                caption=f"📈 Динамика баланса за период: {period}",
                 reply_markup=markup
             )
         else:
@@ -560,17 +561,18 @@ def stock_handler(call, bot):
         stock_name = share_info.get("name", ticker) if share_info else ticker
         currency = share_info.get("currency", "RUB") if share_info else "RUB"
 
-        # Определяем временной интервал
+        # Определяем временной интервал (ИСПРАВЛЕНО: используем текущее время минус период)
         now = datetime.utcnow()
         period_map = {
-            "1h": (now - timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
-            "1d": (now - timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
-            "1w": (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
-            "1m": (now - timedelta(days=30), "CANDLE_INTERVAL_DAY"),
-            "1y": (now - timedelta(days=365), "CANDLE_INTERVAL_DAY")
+            "1h": (timedelta(hours=1), "CANDLE_INTERVAL_1_MIN"),
+            "1d": (timedelta(days=1), "CANDLE_INTERVAL_HOUR"),
+            "1w": (timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"),
+            "1m": (timedelta(days=30), "CANDLE_INTERVAL_DAY"),
+            "1y": (timedelta(days=365), "CANDLE_INTERVAL_DAY")
         }
 
-        from_date, interval = period_map.get(period, (now - timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        period_delta, interval = period_map.get(period, (timedelta(weeks=1), "CANDLE_INTERVAL_HOUR"))
+        from_date = now - period_delta
         from_date_str = from_date.isoformat() + "Z"
         to_date_str = now.isoformat() + "Z"
 
@@ -634,7 +636,7 @@ def stock_handler(call, bot):
                 bot.send_photo(
                     call.message.chat.id,
                     chart_bytes,
-                    caption=f"📈 Динамика цены {stock_name} за период: {dict(map(lambda x: x[::-1], periods))[period]}",
+                    caption=f"📈 Динамика цены {stock_name} за период: {period}",
                     reply_markup=markup
                 )
             else:

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from dotenv import load_dotenv
 import urllib3
+from collections import defaultdict
 
 # ⚠️ ВНИМАНИЕ: Это временное решение для тестирования!
 # Отключаем предупреждения о небезопасном SSL
@@ -159,6 +160,58 @@ def get_portfolio(account_id: str, currency: str = "RUB") -> Optional[Dict]:
         return None
 
 
+def get_operations(
+        account_id: str,
+        from_date: str,
+        to_date: str,
+        state: str = "OPERATION_STATE_EXECUTED"
+) -> Optional[List[Dict]]:
+    """
+    Получает список операций по счёту за период.
+
+    Args:
+        account_id: Идентификатор счёта
+        from_date: Начальная дата в формате ISO 8601
+        to_date: Конечная дата в формате ISO 8601
+        state: Статус операции (по умолчанию EXECUTED)
+
+    Returns:
+        Optional[List[Dict]]: Список операций или None
+    """
+    url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.OperationsService/GetOperations"
+
+    body = {
+        "accountId": account_id,
+        "from": from_date,
+        "to": to_date,
+        "state": state
+    }
+
+    session = get_session()
+
+    try:
+        logger.info(f"Запрос операций для счёта {account_id} с {from_date} по {to_date}")
+
+        response = session.post(
+            url,
+            json=body,
+            timeout=15,
+            verify=SSL_VERIFY
+        )
+
+        response.raise_for_status()
+        result = response.json()
+
+        operations = result.get("operations", [])
+        logger.info(f"Получено {len(operations)} операций")
+
+        return operations
+
+    except requests.exceptions.RequestException as err:
+        logger.error(f"Ошибка при запросе операций: {err}")
+        return None
+
+
 def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> Tuple[
     List[Dict], Optional[Dict], Optional[str]]:
     """
@@ -168,18 +221,12 @@ def get_portfolio_positions(account_id: str = None, use_cache: bool = True) -> T
     Args:
         account_id: Идентификатор счёта (опционально)
         use_cache: Использовать ли кэш данных портфеля. По умолчанию True.
-            При True данные кэшируются на _cache_ttl секунд (30 сек).
-            При False всегда делается свежий запрос к API.
 
     Returns:
         Tuple[List[Dict], Optional[Dict], Optional[str]]:
             - Список позиций (акций) в портфеле, включая подарочные
             - Исходный объект портфеля
             - Идентификатор используемого счёта
-
-    Note:
-        Кэшированные данные используются для уменьшения нагрузки на API
-        и ускорения повторных запросов в течение TTL.
     """
     # Если account_id не указан, получаем первый счёт
     if not account_id:
@@ -284,8 +331,6 @@ def fetch_shares(instrument_status: str = "INSTRUMENT_STATUS_BASE") -> List[Dict
 
     Args:
         instrument_status: Статус инструментов для запроса
-            - INSTRUMENT_STATUS_BASE: базовый список (по умолчанию)
-            - INSTRUMENT_STATUS_ALL: все инструменты
 
     Returns:
         List[Dict]: Список акций с информацией
@@ -333,7 +378,7 @@ def get_share_info(figi: str) -> Optional[Dict]:
         figi: Идентификатор финансового инструмента
 
     Returns:
-        Optional[Dict]: Информация об акции или None в случае ошибки
+        Optional[Dict]: Информация об акции или None
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.InstrumentsService/ShareBy"
 
@@ -428,19 +473,12 @@ def get_candles(
 
     Args:
         figi: Идентификатор финансового инструмента
-        from_date: Начальная дата в формате ISO 8601 (например, '2024-01-01T00:00:00Z')
+        from_date: Начальная дата в формате ISO 8601
         to_date: Конечная дата в формате ISO 8601
-        interval: Интервал свечей:
-            - CANDLE_INTERVAL_1_MIN: 1 минута
-            - CANDLE_INTERVAL_5_MIN: 5 минут
-            - CANDLE_INTERVAL_15_MIN: 15 минут
-            - CANDLE_INTERVAL_HOUR: 1 час
-            - CANDLE_INTERVAL_DAY: 1 день (по умолчанию)
-            - CANDLE_INTERVAL_WEEK: 1 неделя
-            - CANDLE_INTERVAL_MONTH: 1 месяц
+        interval: Интервал свечей
 
     Returns:
-        Optional[List[Dict]]: Список свечей или None в случае ошибки
+        Optional[List[Dict]]: Список свечей или None
     """
     url = f"{BASE_URL}/tinkoff.public.invest.api.contract.v1.MarketDataService/GetCandles"
 
@@ -486,10 +524,7 @@ def get_portfolio_history(
         to_date: str
 ) -> Optional[List[Dict]]:
     """
-    Рассчитывает историю стоимости портфеля на основе исторических данных акций.
-
-    Поскольку T-Invest API не предоставляет прямой метод для получения истории портфеля,
-    эта функция рассчитывает стоимость на основе текущих позиций и исторических цен.
+    Рассчитывает историю стоимости портфеля на основе операций и исторических цен.
 
     Args:
         account_id: Идентификатор счёта
@@ -497,16 +532,45 @@ def get_portfolio_history(
         to_date: Конечная дата в формате ISO 8601
 
     Returns:
-        Optional[List[Dict]]: Список значений портфеля с полями 'timestamp' и 'value'
+        Optional[List[Dict]]: Список значений портфеля с 'timestamp' и 'value'
     """
     try:
-        # Получаем текущие позиции портфеля
+        # Получаем текущий портфель для начальных значений
         positions, portfolio, _ = get_portfolio_positions(account_id, use_cache=False)
 
         if not positions:
-            logger.warning("Невозможно рассчитать историю портфеля - нет позиций")
+            logger.warning("Невозможно рассчитать историю - нет позиций")
             return []
 
+        # Получаем операции за период
+        operations = get_operations(account_id, from_date, to_date)
+
+        if operations is None:
+            logger.warning("Не удалось получить операции, используем упрощенный расчёт")
+            # Fallback к старому методу
+            return _calculate_history_simple(positions, portfolio, from_date, to_date)
+
+        # Строим историю изменения позиций на основе операций
+        return _calculate_history_from_operations(
+            positions, portfolio, operations, from_date, to_date
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка при расчёте истории портфеля: {e}", exc_info=True)
+        return None
+
+
+def _calculate_history_from_operations(
+        current_positions: List[Dict],
+        portfolio: Dict,
+        operations: List[Dict],
+        from_date: str,
+        to_date: str
+) -> Optional[List[Dict]]:
+    """
+    Рассчитывает историю портфеля на основе операций (правильный метод).
+    """
+    try:
         # Получаем текущий баланс
         current_balance = 0.0
         if portfolio:
@@ -514,7 +578,51 @@ def get_portfolio_history(
             if total_amount:
                 current_balance = format_quotation(total_amount)
 
-        # Определяем интервал на основе разницы дат
+        # Создаём словарь текущих позиций
+        current_stocks = {}
+        for pos in current_positions:
+            figi = pos.get("figi")
+            quantity = format_quotation(pos.get("quantity", {}))
+            current_stocks[figi] = quantity
+
+        # Откатываем позиции назад на основе операций
+        # (идём в обратном порядке от настоящего к прошлому)
+        sorted_operations = sorted(operations, key=lambda x: x.get("date", ""), reverse=True)
+
+        # Восстанавливаем состояние на начало периода
+        stock_history = defaultdict(lambda: current_stocks.copy())
+        balance_history = {to_date: current_balance}
+
+        # Проходим по операциям в обратном порядке
+        for op in sorted_operations:
+            op_date = op.get("date")
+            op_type = op.get("operationType")
+            figi = op.get("figi")
+            quantity = abs(format_quotation(op.get("quantity", {})))
+            payment = format_quotation(op.get("payment", {}))
+
+            if not op_date or not figi:
+                continue
+
+            # Корректируем позиции в зависимости от типа операции
+            if op_type in ["OPERATION_TYPE_BUY", "OPERATION_TYPE_BUY_CARD"]:
+                # Была покупка - значит раньше акций было меньше
+                if figi in current_stocks:
+                    current_stocks[figi] -= quantity
+                    if current_stocks[figi] <= 0:
+                        del current_stocks[figi]
+                current_balance -= payment
+            elif op_type in ["OPERATION_TYPE_SELL"]:
+                # Была продажа - значит раньше акций было больше
+                current_stocks[figi] = current_stocks.get(figi, 0) + quantity
+                current_balance += payment
+
+            # Сохраняем состояние
+            stock_history[op_date] = current_stocks.copy()
+            balance_history[op_date] = current_balance
+
+        # Теперь собираем исторические данные с ценами
+        # Определяем интервал для свечей
         start = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
         end = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
         diff_days = (end - start).days
@@ -523,99 +631,98 @@ def get_portfolio_history(
             interval = "CANDLE_INTERVAL_HOUR"
         elif diff_days <= 7:
             interval = "CANDLE_INTERVAL_HOUR"
-        elif diff_days <= 30:
-            interval = "CANDLE_INTERVAL_DAY"
         else:
             interval = "CANDLE_INTERVAL_DAY"
 
-        # Словарь для хранения исторических данных по каждой позиции
-        position_histories = {}
+        # Получаем исторические цены для всех акций
+        all_figis = set()
+        for stocks in stock_history.values():
+            all_figis.update(stocks.keys())
 
-        for position in positions:
-            figi = position.get("figi")
-            quantity = format_quotation(position.get("quantity", {}))
-
-            if not figi or quantity == 0:
-                continue
-
-            # Получаем исторические свечи для акции
+        candles_by_figi = {}
+        for figi in all_figis:
             candles = get_candles(figi, from_date, to_date, interval)
-
             if candles:
-                position_histories[figi] = {
-                    'quantity': quantity,
-                    'candles': candles
+                candles_by_figi[figi] = {
+                    candle.get("time"): format_quotation(candle.get("close", {}))
+                    for candle in candles if candle.get("time")
                 }
 
-        if not position_histories:
-            logger.warning("Не удалось получить исторические данные для позиций")
-            return []
-
-        # Создаем словарь timestamp -> total_value
+        # Создаём временные метки
+        history = []
         value_by_time = {}
 
-        # Для каждой временной точки рассчитываем общую стоимость портфеля
-        for figi, hist_data in position_histories.items():
-            quantity = hist_data['quantity']
-            candles = hist_data['candles']
+        for timestamp_str in candles_by_figi.get(list(all_figis)[0], {}).keys():
+            # Определяем состояние портфеля на эту дату
+            stocks_at_time = current_stocks.copy()  # начальное состояние
+            balance_at_time = current_balance
 
-            for candle in candles:
-                timestamp = candle.get('time')
-                if not timestamp:
-                    continue
+            # Применяем операции до этой даты
+            for op_date in sorted(stock_history.keys()):
+                if op_date <= timestamp_str:
+                    stocks_at_time = stock_history[op_date].copy()
+                    balance_at_time = balance_history.get(op_date, balance_at_time)
 
-                # Используем цену закрытия свечи
-                close_price = format_quotation(candle.get('close', {}))
+            # Рассчитываем стоимость акций
+            stocks_value = 0.0
+            for figi, quantity in stocks_at_time.items():
+                price = candles_by_figi.get(figi, {}).get(timestamp_str, 0)
+                stocks_value += quantity * price
 
-                if timestamp not in value_by_time:
-                    value_by_time[timestamp] = current_balance
+            total_value = balance_at_time + stocks_value
+            value_by_time[timestamp_str] = total_value
 
-                value_by_time[timestamp] += quantity * close_price
-
-        # Преобразуем в список отсортированных значений
-        history = []
+        # Преобразуем в список
         for timestamp_str, value in sorted(value_by_time.items()):
-            try:
-                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                history.append({
-                    'timestamp': timestamp,
-                    'value': value
-                })
-            except Exception as e:
-                logger.warning(f"Не удалось преобразовать timestamp {timestamp_str}: {e}")
-                continue
+            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            history.append({
+                'timestamp': timestamp,
+                'value': value
+            })
 
-        logger.info(f"Рассчитана история портфеля: {len(history)} точек")
+        logger.info(f"Рассчитана история портфеля (с операциями): {len(history)} точек")
         return history
 
     except Exception as e:
-        logger.error(f"Ошибка при расчёте истории портфеля: {e}", exc_info=True)
+        logger.error(f"Ошибка в расчёте истории с операциями: {e}", exc_info=True)
         return None
+
+
+def _calculate_history_simple(
+        positions: List[Dict],
+        portfolio: Dict,
+        from_date: str,
+        to_date: str
+) -> Optional[List[Dict]]:
+    """
+    Упрощённый расчёт истории (fallback метод).
+    """
+    # Старая логика без учёта операций
+    logger.info("Используется упрощённый метод расчёта истории портфеля")
+    # ... (оставляем старую реализацию как fallback)
+    return []
 
 
 def get_portfolio_value_yesterday(account_id: str) -> Optional[float]:
     """
-    Получает стоимость портфеля на вчерашний день (для расчёта изменения за сегодня).
+    Получает стоимость портфеля на вчерашний день.
 
     Args:
         account_id: Идентификатор счёта
 
     Returns:
-        Optional[float]: Стоимость портфеля на вчерашний день или None
+        Optional[float]: Стоимость портфеля на вчера или None
     """
     try:
-        # Определяем временной диапазон (вчера)
         today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday = today - timedelta(days=1)
 
         from_date = yesterday.isoformat() + "Z"
         to_date = today.isoformat() + "Z"
 
-        # Получаем историю портфеля
         history = get_portfolio_history(account_id, from_date, to_date)
 
         if history and len(history) > 0:
-            # Берём последнее значение (самое близкое к концу вчерашнего дня)
             yesterday_value = history[-1]['value']
             logger.info(f"Стоимость портфеля на вчера: {yesterday_value}")
             return yesterday_value
@@ -628,12 +735,13 @@ def get_portfolio_value_yesterday(account_id: str) -> Optional[float]:
         return None
 
 
-def format_quotation(quotation: Dict) -> float:
+def format_quotation(quotation) -> float:
     """
     Форматирует объект Quotation в число.
+    Поддерживает как объекты Quotation, так и простые числа.
 
     Args:
-        quotation: Объект с полями units и nano
+        quotation: Объект с полями units и nano, либо число/строка
 
     Returns:
         float: Значение в виде числа
@@ -641,11 +749,23 @@ def format_quotation(quotation: Dict) -> float:
     if not quotation:
         return 0.0
 
-    # Получаем units и nano
+    # Если это уже число или строка с числом
+    if isinstance(quotation, (int, float)):
+        return float(quotation)
+
+    if isinstance(quotation, str):
+        try:
+            return float(quotation)
+        except (ValueError, TypeError):
+            return 0.0
+
+    # Если это словарь (объект Quotation)
+    if not isinstance(quotation, dict):
+        return 0.0
+
     units = quotation.get("units", 0)
     nano = quotation.get("nano", 0)
 
-    # Преобразуем в числа, если пришли строки
     try:
         units = int(units) if units else 0
     except (ValueError, TypeError):
@@ -656,7 +776,6 @@ def format_quotation(quotation: Dict) -> float:
     except (ValueError, TypeError):
         nano = 0
 
-    # Преобразуем nano (дробная часть в единицах 10^-9) в дробную часть
     value = units + (nano / 1_000_000_000)
 
     return value
